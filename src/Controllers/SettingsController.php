@@ -213,25 +213,26 @@ class SettingsController
         $formFields = FormFieldsParser::getFields($form, true);
         $package = $this->getFormPackage($form);
 
+        // Decode form_fields JSON to access submitButton and stepsWrapper.
+        // $form->fields is only set during rendering, not on Form::find().
+        $decodedFormFields = json_decode($form->form_fields);
+
         // Extract and register strings from regular form fields
         $this->extractAndRegisterStrings($formFields, $formId, $package);
 
         // Extract and register strings from submit button
-        if (isset($form->fields['submitButton'])) {
-            $submitButton = json_decode(json_encode($form->fields['submitButton']), true);
-            $this->extractAndRegisterStrings($submitButton, $formId, $package);
+        if (isset($decodedFormFields->submitButton)) {
+            $this->extractAndRegisterStrings($decodedFormFields->submitButton, $formId, $package);
         }
 
         // Extract and register strings from step start elements
-        if (isset($form->fields['stepsWrapper']['stepStart'])) {
-            $stepStart = json_decode(json_encode($form->fields['stepsWrapper']['stepStart']), true);
-            $this->extractAndRegisterStrings($stepStart, $formId, $package);
+        if (isset($decodedFormFields->stepsWrapper->stepStart)) {
+            $this->extractAndRegisterStrings($decodedFormFields->stepsWrapper->stepStart, $formId, $package);
         }
 
         // Extract and register strings from step end elements
-        if (isset($form->fields['stepsWrapper']['stepEnd'])) {
-            $stepEnd = json_decode(json_encode($form->fields['stepsWrapper']['stepEnd']), true);
-            $this->extractAndRegisterStrings($stepEnd, $formId, $package);
+        if (isset($decodedFormFields->stepsWrapper->stepEnd)) {
+            $this->extractAndRegisterStrings($decodedFormFields->stepsWrapper->stepEnd, $formId, $package);
         }
 
         // Extract and register form settings strings
@@ -436,12 +437,24 @@ class SettingsController
             $this->extractFieldStrings($extractedFields, $stepEnd, $form->id);
         }
 
+        $originalExtractedFields = $extractedFields;
+
         foreach ($extractedFields as $key => $value) {
             $package = $this->getFormPackage($form);
             $extractedFields[$key] = apply_filters('wpml_translate_string', $value, $key, $package);
         }
 
         $updatedFields = $this->updateFormFieldsWithTranslations($form->fields['fields'], $extractedFields);
+
+        // Build a map of original → translated payment option labels, then update
+        // conditional logic condition values so they match the translated HTML values.
+        // Payment fields use the option label as both the HTML value attribute and the
+        // conditional logic condition value, so translations must stay in sync.
+        $paymentLabelMap = $this->buildPaymentLabelTranslationMap($originalExtractedFields, $extractedFields);
+        if (!empty($paymentLabelMap)) {
+            $this->updateConditionalLogicValues($updatedFields, $paymentLabelMap);
+        }
+
         $form->fields['fields'] = $updatedFields;
 
         // Update submit button
@@ -468,6 +481,77 @@ class SettingsController
         return $form;
     }
     
+    private function buildPaymentLabelTranslationMap($originalFields, $translatedFields)
+    {
+        $map = [];
+
+        foreach ($originalFields as $key => $originalValue) {
+            if (strpos($key, '->pricing_options->') === false) {
+                continue;
+            }
+
+            $translatedValue = isset($translatedFields[$key]) ? $translatedFields[$key] : $originalValue;
+
+            if ($originalValue === $translatedValue) {
+                continue;
+            }
+
+            // Key format: "fieldName->pricing_options->index"
+            $fieldName = substr($key, 0, strpos($key, '->'));
+
+            if (!isset($map[$fieldName])) {
+                $map[$fieldName] = [];
+            }
+
+            $map[$fieldName][$originalValue] = $translatedValue;
+        }
+
+        return $map;
+    }
+
+    private function updateConditionalLogicValues(&$fields, $paymentLabelMap)
+    {
+        foreach ($fields as &$field) {
+            // Update simple conditions
+            if (isset($field['settings']['conditional_logics']['conditions'])) {
+                foreach ($field['settings']['conditional_logics']['conditions'] as &$condition) {
+                    if (!isset($condition['field'], $condition['value'])) {
+                        continue;
+                    }
+                    if (isset($paymentLabelMap[$condition['field']][$condition['value']])) {
+                        $condition['value'] = $paymentLabelMap[$condition['field']][$condition['value']];
+                    }
+                }
+            }
+
+            // Update group conditions
+            if (isset($field['settings']['conditional_logics']['condition_groups'])) {
+                foreach ($field['settings']['conditional_logics']['condition_groups'] as &$group) {
+                    if (!isset($group['rules']) || !is_array($group['rules'])) {
+                        continue;
+                    }
+                    foreach ($group['rules'] as &$rule) {
+                        if (!isset($rule['field'], $rule['value'])) {
+                            continue;
+                        }
+                        if (isset($paymentLabelMap[$rule['field']][$rule['value']])) {
+                            $rule['value'] = $paymentLabelMap[$rule['field']][$rule['value']];
+                        }
+                    }
+                }
+            }
+
+            // Recurse into containers
+            if (isset($field['columns'])) {
+                foreach ($field['columns'] as &$column) {
+                    if (isset($column['fields'])) {
+                        $this->updateConditionalLogicValues($column['fields'], $paymentLabelMap);
+                    }
+                }
+            }
+        }
+    }
+
     public function translateConfirmationMessage($confirmation, $formData, $form)
     {
         if (!is_object($form) || !isset($form->id) || !$this->isWpmlEnabledOnForm($form->id)) {
