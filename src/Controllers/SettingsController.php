@@ -6,6 +6,7 @@ use FluentForm\App\Helpers\Helper;
 use FluentForm\App\Models\Form;
 use FluentForm\App\Models\FormMeta;
 use FluentForm\App\Modules\Form\FormFieldsParser;
+use FluentForm\App\Services\Integrations\GlobalNotificationManager;
 use FluentForm\Framework\Helpers\ArrayHelper;
 
 if (!defined('ABSPATH')) {
@@ -17,6 +18,10 @@ class SettingsController
     protected $app;
 
     private static $currentNotificationFeedId = null;
+
+    private static $isPaymentFormSubmitNotification = false;
+
+    private static $paymentSubmitFeedIdQueue = [];
 
     public function __construct($app)
     {
@@ -47,6 +52,9 @@ class SettingsController
         add_filter('fluentform/integration_feed_before_parse', [$this, 'translateFeedValuesBeforeParse'], 10, 4);
         add_action('fluentform/integration_notify_notifications', [$this, 'setCurrentNotificationFeedId'], 5, 4);
 
+        add_action('fluentform/notify_on_form_submit', [$this, 'preparePaymentNotificationFeedQueue'], 9, 3);
+        add_action('fluentform/notify_on_form_submit', [$this, 'clearPaymentNotificationFeedQueue'], 11, 0);
+
         add_filter('fluentform/input_label_shortcode', [$this, 'translateLabelShortcode'], 10, 3);
 
         // Pro Module Translation Filters
@@ -61,6 +69,15 @@ class SettingsController
         add_filter('fluentform/file_upload_messages', [$this, 'translateFileUploadMessages'], 10, 2);
         add_filter('fluentform/double_optin_messages', [$this, 'translateDoubleOptinMessages'], 10, 3);
         add_filter('fluentform/admin_approval_messages', [$this, 'translateAdminApprovalMessages'], 10, 3);
+        add_filter('fluentform/admin_approval_confirmation_message', [$this, 'translateAdminApprovalConfirmationMessage'], 10, 3);
+
+        add_filter('fluentform/honeypot_spam_message', [$this, 'translateHoneypotSpamMessage'], 10, 2);
+        add_filter('fluentform/akismet_spam_message', [$this, 'translateAkismetSpamMessage'], 10, 2);
+        add_filter('fluentform/too_many_requests', [$this, 'translateTooManyRequestsMessage'], 10, 2);
+        add_filter('fluentform/recaptcha_failed_message', [$this, 'translateCaptchaFailedMessage'], 10, 2);
+        add_filter('fluentform/hcaptcha_failed_message', [$this, 'translateCaptchaFailedMessage'], 10, 2);
+        add_filter('fluentform/turnstile_failed_message', [$this, 'translateCaptchaFailedMessage'], 10, 2);
+        add_filter('fluentform/quiz_personality_test_fallback_label', [$this, 'translateQuizPersonalityFallbackLabel'], 10, 2);
 
         // Shortcode Translation Filters
         add_filter('fluentform/popup_shortcode_defaults', [$this, 'translatePopupShortcodeDefaults'], 10, 2);
@@ -847,6 +864,97 @@ class SettingsController
         return $messages;
     }
 
+    public function translateAdminApprovalConfirmationMessage($message, $status, $form)
+    {
+        if (!is_object($form) || !isset($form->id) || !$this->isWpmlEnabledOnForm($form->id)) {
+            return $message;
+        }
+
+        $package = $this->getFormPackage($form);
+
+        $keyMap = [
+            'approved'   => 'admin_approval_success_message',
+            'declined'   => 'admin_approval_failed_message',
+            'unapproved' => 'admin_approval_pending_message',
+        ];
+        $translationKey = isset($keyMap[$status]) ? $keyMap[$status] : 'admin_approval_pending_message';
+
+        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_{$translationKey}", $package);
+    }
+
+    public function translateHoneypotSpamMessage($message, $formId)
+    {
+        if (!$this->isWpmlEnabledOnForm($formId)) {
+            return $message;
+        }
+
+        $form = Form::find($formId);
+        if (!$form) {
+            return $message;
+        }
+
+        $package = $this->getFormPackage($form);
+        return apply_filters('wpml_translate_string', $message, "form_{$formId}_honeypot_spam_message", $package);
+    }
+
+    public function translateCaptchaFailedMessage($message, $form)
+    {
+        if (!is_object($form) || !isset($form->id) || !$this->isWpmlEnabledOnForm($form->id)) {
+            return $message;
+        }
+
+        $currentFilter = current_filter();
+        $keyMap = [
+            'fluentform/recaptcha_failed_message'  => 'recaptcha_failed_message',
+            'fluentform/hcaptcha_failed_message'   => 'hcaptcha_failed_message',
+            'fluentform/turnstile_failed_message'  => 'turnstile_failed_message',
+        ];
+        $translationKey = isset($keyMap[$currentFilter]) ? $keyMap[$currentFilter] : 'captcha_failed_message';
+
+        $package = $this->getFormPackage($form);
+        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_{$translationKey}", $package);
+    }
+
+    public function translateAkismetSpamMessage($message, $formId)
+    {
+        if (!$this->isWpmlEnabledOnForm($formId)) {
+            return $message;
+        }
+
+        $form = Form::find($formId);
+        if (!$form) {
+            return $message;
+        }
+
+        $package = $this->getFormPackage($form);
+        return apply_filters('wpml_translate_string', $message, "form_{$formId}_akismet_spam_message", $package);
+    }
+
+    public function translateTooManyRequestsMessage($message, $formId)
+    {
+        if (!$this->isWpmlEnabledOnForm($formId)) {
+            return $message;
+        }
+
+        $form = Form::find($formId);
+        if (!$form) {
+            return $message;
+        }
+
+        $package = $this->getFormPackage($form);
+        return apply_filters('wpml_translate_string', $message, "form_{$formId}_too_many_requests_message", $package);
+    }
+
+    public function translateQuizPersonalityFallbackLabel($label, $form)
+    {
+        if (!is_object($form) || !isset($form->id) || !$this->isWpmlEnabledOnForm($form->id)) {
+            return $label;
+        }
+
+        $package = $this->getFormPackage($form);
+        return apply_filters('wpml_translate_string', $label, "form_{$form->id}_quiz_personality_fallback_label", $package);
+    }
+
     public function translatePopupShortcodeDefaults($defaults, $atts)
     {
         if (!isset($atts['form_id'])) {
@@ -1182,16 +1290,6 @@ class SettingsController
         return apply_filters('wpml_translate_string', $content, "form_{$form->id}_conditional_content", $package);
     }
 
-    public function translateStepValidationMessage($message, $formData, $form)
-    {
-        if (!$this->isWpmlEnabledOnForm($form->id)) {
-            return $message;
-        }
-
-        $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_step_validation_message", $package);
-    }
-
     public function translateRepeaterFieldMessages($messages, $form)
     {
         if (!$this->isWpmlEnabledOnForm($form->id)) {
@@ -1328,6 +1426,49 @@ class SettingsController
     public function setCurrentNotificationFeedId($feed, $formData, $entry, $form)
     {
         self::$currentNotificationFeedId = ArrayHelper::get($feed, 'id');
+    }
+
+    public function preparePaymentNotificationFeedQueue($submissionId, $submissionData, $form)
+    {
+        self::$isPaymentFormSubmitNotification = true;
+
+        if ('yes' === Helper::getSubmissionMeta($submissionId, '_ff_on_submit_email_sent')) {
+            return;
+        }
+
+        $emailFeeds = wpFluent()->table('fluentform_form_meta')
+            ->where('form_id', $form->id)
+            ->where('meta_key', 'notifications')
+            ->get();
+
+        if (!count($emailFeeds)) {
+            return;
+        }
+
+        $formData = wpFluent()->table('fluentform_submissions')
+            ->where('id', $submissionId)
+            ->first();
+
+        $formData = $formData ? json_decode($formData->response, true) : $submissionData;
+
+        $notificationManager = new GlobalNotificationManager(wpFluentForm());
+        $activeEmailFeeds = $notificationManager->getEnabledFeeds($emailFeeds, $formData, $submissionId);
+
+        if (!$activeEmailFeeds) {
+            return;
+        }
+
+        foreach ($activeEmailFeeds as $feed) {
+            if ('payment_form_submit' === ArrayHelper::get($feed, 'settings.feed_trigger_event')) {
+                self::$paymentSubmitFeedIdQueue[] = ArrayHelper::get($feed, 'id');
+            }
+        }
+    }
+
+    public function clearPaymentNotificationFeedQueue()
+    {
+        self::$isPaymentFormSubmitNotification = false;
+        self::$paymentSubmitFeedIdQueue = [];
     }
 
     public function translateFeedValuesBeforeParse($feed, $insertId, $formData, $form)
@@ -1999,15 +2140,23 @@ class SettingsController
             }
         }
 
-        // Notifications - now definitely an array of arrays
-        if (isset($settings['notifications'])) {
-            foreach ($settings['notifications'] as $index => $notification) {
-                if (isset($notification['subject'])) {
-                    $extractedStrings["form_{$formId}_notification_{$index}_subject"] = $notification['subject'];
-                }
-                if (isset($notification['message'])) {
-                    $extractedStrings["form_{$formId}_notification_{$index}_message"] = $notification['message'];
-                }
+        // Notifications - load from DB to use the actual meta row ID, which matches
+        // the key used at translation time in translateEmailSubjectLine/translateEmailBody.
+        $notificationMetas = wpFluent()->table('fluentform_form_meta')
+            ->where('form_id', $formId)
+            ->where('meta_key', 'notifications')
+            ->get();
+
+        foreach ($notificationMetas as $meta) {
+            $notification = json_decode($meta->value, true);
+            if (!$notification) {
+                continue;
+            }
+            if (!empty($notification['subject'])) {
+                $extractedStrings["form_{$formId}_notification_{$meta->id}_subject"] = $notification['subject'];
+            }
+            if (!empty($notification['message'])) {
+                $extractedStrings["form_{$formId}_notification_{$meta->id}_message"] = $notification['message'];
             }
         }
 
@@ -2204,10 +2353,16 @@ class SettingsController
             if (isset($adminApprovalSettings['approval_pending_message'])) {
                 $extractedStrings["form_{$formId}_admin_approval_pending_message"] = $adminApprovalSettings['approval_pending_message'];
             }
-            
-            if (isset($adminApprovalSettings['email_subject'])) {
-                $extractedStrings["form_{$formId}_admin_approval_email_subject"] = $adminApprovalSettings['email_subject'];
+            if (isset($adminApprovalSettings['approval_success_message'])) {
+                $extractedStrings["form_{$formId}_admin_approval_success_message"] = $adminApprovalSettings['approval_success_message'];
             }
+            if (isset($adminApprovalSettings['approval_failed_message'])) {
+                $extractedStrings["form_{$formId}_admin_approval_failed_message"] = $adminApprovalSettings['approval_failed_message'];
+            }
+            
+            $extractedStrings["form_{$formId}_admin_approval_email_subject"] = ArrayHelper::get(
+                $adminApprovalSettings, 'email_subject', 'Submission Declined'
+            );
             
             if (isset($adminApprovalSettings['email_body'])) {
                 $extractedStrings["form_{$formId}_admin_approval_email_body"] = $adminApprovalSettings['email_body'];
@@ -2241,6 +2396,11 @@ class SettingsController
         // This is a default string that can be filtered, so we register the default for translation
         // The filter will handle translation at runtime
         $extractedStrings["form_{$formId}_quiz_no_grade_label"] = __('Not Graded', 'fluentformpro');
+
+        // Global security/spam defaults - same message for all forms but translatable per-form
+        $extractedStrings["form_{$formId}_akismet_spam_message"] = __('Submission marked as spammed. Please try again', 'fluentform');
+        $extractedStrings["form_{$formId}_too_many_requests_message"] = __('Too Many Requests.', 'fluentform');
+        $extractedStrings["form_{$formId}_quiz_personality_fallback_label"] = __('Did not match any options!', 'fluentformpro');
 
         foreach ($extractedStrings as $key => $value) {
             $type = 'LINE';
@@ -3322,9 +3482,23 @@ class SettingsController
 
         $package = $this->getFormPackage($form);
         $feedId = self::$currentNotificationFeedId;
-        $key = $feedId !== null
-            ? "form_{$form->id}_notification_{$feedId}_message"
-            : "form_{$form->id}_submission_message_parse";
+
+        if ($feedId !== null) {
+            $key = "form_{$form->id}_notification_{$feedId}_message";
+        } elseif (self::$isPaymentFormSubmitNotification) {
+            // Payment form "on submit" notification path: the feed ID is not passed through
+            // fluentform/integration_notify_notifications, so we maintain our own queue.
+            $queuedFeedId = array_shift(self::$paymentSubmitFeedIdQueue);
+            if ($queuedFeedId) {
+                self::$currentNotificationFeedId = $queuedFeedId;
+                $key = "form_{$form->id}_notification_{$queuedFeedId}_message";
+            } else {
+                return $message;
+            }
+        } else {
+            $key = "form_{$form->id}_submission_message_parse";
+        }
+
         return apply_filters('wpml_translate_string', $message, $key, $package);
     }
 
