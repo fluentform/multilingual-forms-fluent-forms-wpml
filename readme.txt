@@ -91,7 +91,7 @@ Install From WordPress Admin Panel:
 = 1.0.2 =
 - Add multiple email notifications support
 - Add PHP 7.4 to 8.3 compatibility
-- Fix PHP notice "Trying to get property 'id' of non-object"
+- Fix PHP notice "Trying to get property 'id' of non-object" when form is passed as array
 
 = 1.0.1 =
 - Fix accordion issue with stdObject

@@ -40,7 +40,7 @@ You must have all three plugins active for this integration to function properly
 
 ## Changelog
 
-### 1.0.3
+### 1.0.2
 - Add multiple email notifications support
 - Add PHP 7.4 to 8.3 compatibility
 - Fix PHP notice "Trying to get property 'id' of non-object" when form is passed as array
