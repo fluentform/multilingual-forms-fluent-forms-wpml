@@ -1445,6 +1445,12 @@ class SettingsController
             return;
         }
 
+        // Requires FluentForm\App\Services\Integrations\GlobalNotificationManager::getEnabledFeeds($feeds, $formData, $insertId)
+        // available since Fluent Forms 6.0.2 (minimum version declared in plugin header).
+        if (!class_exists(GlobalNotificationManager::class) || !method_exists(GlobalNotificationManager::class, 'getEnabledFeeds')) {
+            return;
+        }
+
         $notificationManager = new GlobalNotificationManager(wpFluentForm());
         $activeEmailFeeds = $notificationManager->getEnabledFeeds($emailFeeds, $submissionData, $submissionId);
 
