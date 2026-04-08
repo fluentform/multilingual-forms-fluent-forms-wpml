@@ -1445,14 +1445,8 @@ class SettingsController
             return;
         }
 
-        $formData = wpFluent()->table('fluentform_submissions')
-            ->where('id', $submissionId)
-            ->first();
-
-        $formData = $formData ? json_decode($formData->response, true) : $submissionData;
-
         $notificationManager = new GlobalNotificationManager(wpFluentForm());
-        $activeEmailFeeds = $notificationManager->getEnabledFeeds($emailFeeds, $formData, $submissionId);
+        $activeEmailFeeds = $notificationManager->getEnabledFeeds($emailFeeds, $submissionData, $submissionId);
 
         if (!$activeEmailFeeds) {
             return;
