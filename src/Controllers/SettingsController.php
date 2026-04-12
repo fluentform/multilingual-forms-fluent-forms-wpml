@@ -23,6 +23,8 @@ class SettingsController
 
     private static $paymentSubmitFeedIdQueue = [];
 
+    private static $conditionalConfirmationMetaCache = [];
+
     public function __construct($app)
     {
         $this->app = $app;
@@ -111,11 +113,13 @@ class SettingsController
         add_filter('fluentform/square_payment_redirect_message', [$this, 'translateSquarePaymentRedirectMessage'], 10, 3);
 
         // Paystack specific
-        add_filter('fluentform/paystack_payment_modal_opening_message', [$this, 'translatePaystackPaymentModalOpeningMessage'], 10, 3);
-        add_filter('fluentform/paystack_payment_confirming_message', [$this, 'translatePaystackPaymentConfirmingMessage'], 10, 3);
-        add_filter('fluentform/paystack_payment_verification_error', [$this, 'translatePaystackPaymentVerificationError'], 10, 3);
+        add_filter('fluentform/payment_modal_opening_message', [$this, 'translatePaymentModalOpeningMessage'], 10, 3);
+        add_filter('fluentform/payment_confirming_message', [$this, 'translatePaymentConfirmingMessage'], 10, 3);
+        add_filter('fluentform/payment_verification_error', [$this, 'translatePaymentVerificationError'], 10, 3);
 
         // PayPal specific
+        add_filter('fluentform/paypal_pending_message', [$this, 'translatePaypalPendingMessage'], 10, 2);
+        add_filter('fluentform/paypal_pending_message_title', [$this, 'translatePaypalPendingMessageTitle'], 10, 2);
         add_filter('fluentform/paypal_payment_processing_message', [$this, 'translatePaypalPaymentProcessingMessage'], 10, 3);
         add_filter('fluentform/paypal_payment_sandbox_message', [$this, 'translatePaypalPaymentSandboxMessage'], 10, 3);
         add_filter('fluentform/paypal_payment_cancelled_title', [$this, 'translatePaypalPaymentCancelledTitle'], 10, 3);
@@ -156,6 +160,8 @@ class SettingsController
         add_filter('fluentform/entry_lists_labels', [$this, 'translateEntryListsLabels'], 10, 2);
 
         add_filter('fluentform/all_data_shortcode_html', [$this, 'translateAllDataShortcode'],10, 4);
+        add_filter('fluentform/landing_vars', [$this, 'translateLandingVars'], 10, 2);
+        add_filter('fluentform/front_end_entry_view_settings', [$this, 'translateFrontEndEntryViewSettings'], 10, 2);
 
         add_filter('fluentform_pdf/check_wpml_active', [$this, 'isWpmlActive'], 10, 1);
         add_filter('fluentform_pdf/get_current_language', [$this, 'getCurrentWpmlLanguage'], 10, 1);
@@ -207,7 +213,6 @@ class SettingsController
                 'ff_wpml',
                 '_total_views',
                 'revision',
-                '_landing_page_settings',
                 'template_name'
             ])
             ->get()
@@ -279,7 +284,6 @@ class SettingsController
                 'ff_wpml',
                 '_total_views',
                 'revision',
-                '_landing_page_settings',
                 'template_name'
             ])
             ->get()
@@ -582,15 +586,20 @@ class SettingsController
         $package = $this->getFormPackage($form);
 
         $confirmationId = isset($confirmation['id']) && !empty($confirmation['id']) ? $confirmation['id'] : null;
+        if (!$confirmationId) {
+            $confirmationId = $this->resolveConditionalConfirmationMetaId($form->id, $confirmation);
+        }
         
         if ($confirmationId) {
             $messageKey = "form_{$form->id}_conditional_confirmation_{$confirmationId}_message";
             $customPageKey = "form_{$form->id}_conditional_confirmation_{$confirmationId}_custom_page";
             $pageTitleKey = "form_{$form->id}_conditional_confirmation_{$confirmationId}_page_title";
+            $redirectMessageKey = "form_{$form->id}_conditional_confirmation_{$confirmationId}_redirect_message";
         } else {
             $messageKey = "form_{$form->id}_confirmation_message";
             $customPageKey = "form_{$form->id}_confirmation_custom_page";
             $pageTitleKey = "form_{$form->id}_confirmation_page_title";
+            $redirectMessageKey = "form_{$form->id}_confirmation_redirect_message";
         }
 
         if (!empty($confirmation['messageToShow'])) {
@@ -603,6 +612,10 @@ class SettingsController
 
         if (!empty($confirmation['successPageTitle'])) {
             $confirmation['successPageTitle'] = apply_filters('wpml_translate_string', $confirmation['successPageTitle'], $pageTitleKey, $package);
+        }
+
+        if (!empty($confirmation['redirectMessage'])) {
+            $confirmation['redirectMessage'] = apply_filters('wpml_translate_string', $confirmation['redirectMessage'], $redirectMessageKey, $package);
         }
 
         return $confirmation;
@@ -726,7 +739,7 @@ class SettingsController
 
         $package = $this->getFormPackage($form);
 
-        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_modal_text", $package);
+        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_modal_button_text", $package);
     }
 
     public function translateSurveyLabels($labels, $form)
@@ -757,7 +770,17 @@ class SettingsController
         $package = $this->getFormPackage($form);
         foreach ($formLabels as $key => $label) {
             if (is_string($label)) {
-                $formLabels[$key] = apply_filters('wpml_translate_string', $label, "form_{$form->id}_entry_list_label_{$key}", $package);
+                $translated = apply_filters('wpml_translate_string', $label, "form_{$form->id}_entry_list_label_{$key}", $package);
+
+                if ($translated === $label) {
+                    $translated = apply_filters('wpml_translate_string', $label, "{$key}->admin_label", $package);
+                }
+
+                if ($translated === $label) {
+                    $translated = apply_filters('wpml_translate_string', $label, "{$key}->Label", $package);
+                }
+
+                $formLabels[$key] = $translated;
             }
         }
 
@@ -849,8 +872,8 @@ class SettingsController
 
         $translatableKeys = [
             'approval_message' => 'admin_approval_pending_message',
-            'approved_message' => 'approval_approved_message',
-            'rejected_message' => 'approval_rejected_message',
+            'approved_message' => 'admin_approval_success_message',
+            'rejected_message' => 'admin_approval_failed_message',
             'notification_subject' => 'admin_approval_email_subject',
             'notification_body' => 'admin_approval_email_body'
         ];
@@ -1019,6 +1042,13 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
+        $translationKey = "form_{$form->id}_survey_field_label_" . md5($label);
+        $translated = apply_filters('wpml_translate_string', $label, $translationKey, $package);
+
+        if ($translated !== $label) {
+            return $translated;
+        }
+
         return apply_filters('wpml_translate_string', $label, "form_{$form->id}_survey_field_label", $package);
     }
 
@@ -1039,7 +1069,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_double_optin_confirmation", $package);
+        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_optin_confirmation_message", $package);
     }
 
     public function translateFileUploadButtonText($text, $form)
@@ -1122,34 +1152,61 @@ class SettingsController
         return apply_filters('wpml_translate_string', $message, "form_{$form->id}_square_payment_redirect_message", $package);
     }
 
-    public function translatePaystackPaymentModalOpeningMessage($message, $submission, $form)
+    public function translatePaymentModalOpeningMessage($message, $submission, $form)
     {
         if (!$this->isWpmlEnabledOnForm($form->id)) {
             return $message;
         }
 
-        $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_paystack_payment_modal_opening_message", $package);
+        return $this->translateRuntimeFormString($message, $form, "form_{$form->id}_payment_modal_opening_message");
     }
 
-    public function translatePaystackPaymentConfirmingMessage($message, $submission, $form)
+    public function translatePaymentConfirmingMessage($message, $submission, $form)
     {
         if (!$this->isWpmlEnabledOnForm($form->id)) {
             return $message;
         }
 
-        $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_paystack_payment_confirming_message", $package);
+        return $this->translateRuntimeFormString($message, $form, "form_{$form->id}_payment_confirming_message");
     }
 
-    public function translatePaystackPaymentVerificationError($message, $submission, $form)
+    public function translatePaymentVerificationError($message, $submission, $form)
     {
         if (!$this->isWpmlEnabledOnForm($form->id)) {
             return $message;
         }
 
-        $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_paystack_payment_verification_error", $package);
+        return $this->translateRuntimeFormString($message, $form, "form_{$form->id}_payment_verification_error");
+    }
+
+    public function translatePaypalPendingMessage($message, $submission)
+    {
+        $formId = is_object($submission) ? (int) $submission->form_id : 0;
+        if (!$formId || !$this->isWpmlEnabledOnForm($formId)) {
+            return $message;
+        }
+
+        $form = Form::find($formId);
+        if (!$form) {
+            return $message;
+        }
+
+        return $this->translateRuntimeFormString($message, $form, "form_{$form->id}_paypal_pending_message", 'AREA');
+    }
+
+    public function translatePaypalPendingMessageTitle($title, $submission)
+    {
+        $formId = is_object($submission) ? (int) $submission->form_id : 0;
+        if (!$formId || !$this->isWpmlEnabledOnForm($formId)) {
+            return $title;
+        }
+
+        $form = Form::find($formId);
+        if (!$form) {
+            return $title;
+        }
+
+        return $this->translateRuntimeFormString($title, $form, "form_{$form->id}_paypal_pending_title");
     }
 
     public function translateQuizResultTitle($title, $submission, $form)
@@ -1174,7 +1231,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_step_next_button_text", $package);
+        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_step_next_btn", $package);
     }
 
     public function translateStepPrevButtonText($text, $data)
@@ -1189,7 +1246,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_step_prev_button_text", $package);
+        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_step_prev_btn", $package);
     }
 
     public function translateStripePaymentCancelledMessage($message, $submission, $form)
@@ -1266,7 +1323,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_validation_error_message", $package);
+        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_advanced_validation_error", $package);
     }
 
     public function translateTokenBasedValidationErrorMessage($message, $formId)
@@ -1371,7 +1428,11 @@ class SettingsController
         // Translate quiz grade labels
         if ($scoreType === 'grade' && is_string($result)) {
             // Get quiz settings to find the grade index
-            $quizSettings = Helper::getFormMeta($formId, 'quiz_settings', true);
+            $quizSettings = Helper::getFormMeta($formId, '_quiz_settings', true);
+
+            if (!$quizSettings) {
+                $quizSettings = Helper::getFormMeta($formId, 'quiz_settings', true);
+            }
             
             if ($quizSettings) {
                 // Handle both array of quiz settings and single quiz settings object
@@ -1651,6 +1712,7 @@ class SettingsController
         // Extract common fields
         if (!empty($field->settings->label)) {
             $fields["{$fieldIdentifier}->Label"] = $field->settings->label;
+            $fields["form_{$formId}_survey_field_label_" . md5($field->settings->label)] = $field->settings->label;
         }
 
         if (!empty($field->settings->admin_label)) {
@@ -1966,6 +2028,10 @@ class SettingsController
                 break;
 
             case 'save_progress_button':
+                if (!empty($field->settings->button_ui) && !empty($field->settings->button_ui->text)) {
+                    $fields["form_{$formId}_save_progress_button_text"] = $field->settings->button_ui->text;
+                }
+
                 // Extract save progress button messages and email templates
                 if (!empty($field->settings->save_success_message)) {
                     $fields["{$fieldIdentifier}->save_success_message"] = $field->settings->save_success_message;
@@ -2015,6 +2081,13 @@ class SettingsController
                             $fields["{$fieldIdentifier}->Country Options->{$value}"] = $label;
                         }
                     }
+                }
+                break;
+
+            case 'input_file':
+            case 'input_image':
+                if (!empty($field->settings->btn_text)) {
+                    $fields["form_{$formId}_file_upload_button_text"] = $field->settings->btn_text;
                 }
                 break;
 
@@ -2070,10 +2143,15 @@ class SettingsController
     private function extractAndRegisterFormSettingsStrings($settings, $formId, $package)
     {
         $extractedStrings = [];
+        $formSettings = [];
+
+        if (!empty($settings['formSettings']) && is_array($settings['formSettings'])) {
+            $formSettings = reset($settings['formSettings']) ?: [];
+        }
 
         // Confirmation settings
-        if (isset($settings['formSettings'][0]['confirmation'])) {
-            $confirmation = $settings['formSettings'][0]['confirmation'];
+        if (isset($formSettings['confirmation'])) {
+            $confirmation = $formSettings['confirmation'];
 
             // Main confirmation message
             if (isset($confirmation['messageToShow'])) {
@@ -2091,11 +2169,15 @@ class SettingsController
             if (isset($confirmation['successPageTitle'])) {
                 $extractedStrings["form_{$formId}_confirmation_page_title"] = $confirmation['successPageTitle'];
             }
+
+            if (isset($confirmation['redirectMessage'])) {
+                $extractedStrings["form_{$formId}_confirmation_redirect_message"] = $confirmation['redirectMessage'];
+            }
         }
 
         // Restriction messages
-        if (isset($settings['formSettings'][0]['restrictions'])) {
-            $restrictions = $settings['formSettings'][0]['restrictions'];
+        if (isset($formSettings['restrictions'])) {
+            $restrictions = $formSettings['restrictions'];
 
             // Entry limit message
             if (isset($restrictions['limitNumberOfEntries']['limitReachedMsg'])) {
@@ -2189,24 +2271,38 @@ class SettingsController
             }
         }
 
+        $paymentSettingsGroup = [];
+        if (!empty($settings['_payment_settings']) && is_array($settings['_payment_settings'])) {
+            $paymentSettingsGroup = $settings['_payment_settings'];
+        } elseif (!empty($settings['payment_settings']) && is_array($settings['payment_settings'])) {
+            $paymentSettingsGroup = $settings['payment_settings'];
+        }
+
         // Payment Settings
-        if (isset($settings['payment_settings'])) {
-            foreach ($settings['payment_settings'] as $index => $paymentSettings) {
+        if ($paymentSettingsGroup) {
+            foreach ($paymentSettingsGroup as $metaId => $paymentSettings) {
                 if (isset($paymentSettings['confirmation_message'])) {
-                    $extractedStrings["form_{$formId}_payment_confirmation_{$index}"] = $paymentSettings['confirmation_message'];
+                    $extractedStrings["form_{$formId}_payment_{$metaId}_payment_confirmation_message"] = $paymentSettings['confirmation_message'];
                 }
                 if (isset($paymentSettings['error_message'])) {
-                    $extractedStrings["form_{$formId}_payment_error_{$index}"] = $paymentSettings['error_message'];
+                    $extractedStrings["form_{$formId}_payment_{$metaId}_payment_error_message"] = $paymentSettings['error_message'];
                 }
                 if (isset($paymentSettings['receipt_template'])) {
-                    $extractedStrings["form_{$formId}_payment_receipt_{$index}"] = $paymentSettings['receipt_template'];
+                    $extractedStrings["form_{$formId}_payment_{$metaId}_payment_receipt_template"] = $paymentSettings['receipt_template'];
                 }
             }
         }
 
+        $quizSettingsGroup = [];
+        if (!empty($settings['_quiz_settings']) && is_array($settings['_quiz_settings'])) {
+            $quizSettingsGroup = $settings['_quiz_settings'];
+        } elseif (!empty($settings['quiz_settings']) && is_array($settings['quiz_settings'])) {
+            $quizSettingsGroup = $settings['quiz_settings'];
+        }
+
         // Quiz Settings
-        if (isset($settings['quiz_settings'])) {
-            foreach ($settings['quiz_settings'] as $index => $quizSettings) {
+        if ($quizSettingsGroup) {
+            foreach ($quizSettingsGroup as $index => $quizSettings) {
                 if (isset($quizSettings['result_message'])) {
                     $extractedStrings["form_{$formId}_quiz_result_{$index}"] = $quizSettings['result_message'];
                 }
@@ -2253,6 +2349,37 @@ class SettingsController
                 if (isset($settings['file_upload_settings'][$key])) {
                     $extractedStrings["form_{$formId}_{$translationKey}"] = $settings['file_upload_settings'][$key];
                 }
+            }
+        }
+
+        if (isset($settings['_landing_page_settings'])) {
+            $landingPageSettings = end($settings['_landing_page_settings']);
+            if (is_array($landingPageSettings)) {
+                if (!empty($landingPageSettings['title'])) {
+                    $extractedStrings["form_{$formId}_landing_page_title"] = $landingPageSettings['title'];
+                }
+
+                if (!empty($landingPageSettings['description'])) {
+                    $extractedStrings["form_{$formId}_landing_page_description"] = $landingPageSettings['description'];
+                }
+            }
+        }
+
+        if (isset($settings['front_end_entry_view'])) {
+            foreach ($settings['front_end_entry_view'] as $frontEndEntryView) {
+                if (!empty($frontEndEntryView['title'])) {
+                    $extractedStrings["form_{$formId}_front_end_entry_view_title"] = $frontEndEntryView['title'];
+                }
+
+                if (!empty($frontEndEntryView['description'])) {
+                    $extractedStrings["form_{$formId}_front_end_entry_view_description"] = $frontEndEntryView['description'];
+                }
+
+                if (!empty($frontEndEntryView['content'])) {
+                    $extractedStrings["form_{$formId}_front_end_entry_view_content"] = $frontEndEntryView['content'];
+                }
+
+                break;
             }
         }
 
@@ -2339,6 +2466,10 @@ class SettingsController
                         if (isset($confirmation['successPageTitle']) && !empty($confirmation['successPageTitle'])) {
                             $extractedStrings["form_{$formId}_conditional_confirmation_{$confirmationIndex}_page_title"] = $confirmation['successPageTitle'];
                         }
+
+                        if (isset($confirmation['redirectMessage']) && !empty($confirmation['redirectMessage'])) {
+                            $extractedStrings["form_{$formId}_conditional_confirmation_{$confirmationIndex}_redirect_message"] = $confirmation['redirectMessage'];
+                        }
                     }
                 }
             }
@@ -2346,8 +2477,8 @@ class SettingsController
 
         // Admin Approval Settings (Pro) - stored in FormMeta with meta_key 'admin_approval_settings'
         if (isset($settings['admin_approval_settings'])) {
-            $adminApprovalSettings = is_array($settings['admin_approval_settings']) && isset($settings['admin_approval_settings'][0]) 
-                ? $settings['admin_approval_settings'][0] 
+            $adminApprovalSettings = is_array($settings['admin_approval_settings'])
+                ? (reset($settings['admin_approval_settings']) ?: [])
                 : $settings['admin_approval_settings'];
             
             if (isset($adminApprovalSettings['approval_pending_message'])) {
@@ -2369,9 +2500,9 @@ class SettingsController
             }
         }
 
-        // Quiz Grade Labels (Pro) - extract from quiz_settings grades array
-        if (isset($settings['quiz_settings'])) {
-            foreach ($settings['quiz_settings'] as $index => $quizSettings) {
+        // Quiz Grade Labels (Pro) - extract from quiz settings grades array
+        if ($quizSettingsGroup) {
+            foreach ($quizSettingsGroup as $index => $quizSettings) {
                 // Handle both array of quiz settings and single quiz settings object
                 $quizSettingsToProcess = [];
                 if (isset($quizSettings[0]) && is_array($quizSettings[0])) {
@@ -2397,6 +2528,56 @@ class SettingsController
         // The filter will handle translation at runtime
         $extractedStrings["form_{$formId}_quiz_no_grade_label"] = __('Not Graded', 'fluentformpro');
 
+        // Per-form runtime defaults that are localized in JS and need explicit registration.
+        $extractedStrings["form_{$formId}_file_upload_in_progress_message"] = __('File upload in progress. Please wait...', 'fluentform');
+        $extractedStrings["form_{$formId}_javascript_handler_failed_message"] = __('Javascript handler could not be loaded. Form submission has been failed. Reload the page and try again', 'fluentform');
+
+        $extractedStrings["form_{$formId}_payment_stock_out_message"] = __('This Item is Stock Out', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_item_label"] = __('Item', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_price_label"] = __('Price', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_qty_label"] = __('Qty', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_line_total_label"] = __('Line Total', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_sub_total_label"] = __('Sub Total', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_discount_label"] = __('Discount', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_total_label"] = __('Total', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_signup_fee_label"] = __('Signup Fee', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_trial_label"] = __('Trial', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_processing_text"] = __('Processing...', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_confirming_text"] = __('Confirming...', 'fluentform');
+
+        $extractedStrings["form_{$formId}_save_progress_copy_button"] = __('Copy', 'fluentform');
+        $extractedStrings["form_{$formId}_save_progress_email_button"] = __('Email', 'fluentform');
+        $extractedStrings["form_{$formId}_save_progress_email_placeholder"] = __('Your Email Here', 'fluentform');
+        $extractedStrings["form_{$formId}_save_progress_copy_success"] = __('Copied', 'fluentform');
+
+        $extractedStrings["form_{$formId}_address_autocomplete_please_wait"] = __('Please wait ...', 'fluentform');
+        $extractedStrings["form_{$formId}_address_autocomplete_location_not_determined"] = __('Could not determine address from location.', 'fluentform');
+        $extractedStrings["form_{$formId}_address_autocomplete_address_fetch_failed"] = __('Failed to fetch address from coordinates.', 'fluentform');
+        $extractedStrings["form_{$formId}_address_autocomplete_geolocation_failed"] = __('Geolocation failed or was denied.', 'fluentform');
+        $extractedStrings["form_{$formId}_address_autocomplete_geolocation_not_supported"] = __('Geolocation is not supported by this browser.', 'fluentform');
+
+        $extractedStrings["form_{$formId}_payment_gateway_request_failed"] = __('Request failed. Please try again', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_gateway_payment_failed"] = __('Payment process failed!', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_gateway_no_method_found"] = __('No method found', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_gateway_processing_text"] = __('Processing...', 'fluentform');
+
+        $extractedStrings["form_{$formId}_token_based_validation_message"] = __('Suspicious activity detected. Form submission blocked', 'fluentform');
+        $extractedStrings["form_{$formId}_survey_votes_text"] = __(' votes', 'fluentformpro');
+        $extractedStrings["form_{$formId}_survey_label_label"] = __('yes', 'fluentformpro');
+        $extractedStrings["form_{$formId}_survey_label_counts"] = __('yes', 'fluentformpro');
+        $extractedStrings["form_{$formId}_survey_label_default"] = __('yes', 'fluentformpro');
+        $extractedStrings["form_{$formId}_survey_counts_default"] = __('yes', 'fluentformpro');
+        $extractedStrings["form_{$formId}_quiz_result_title"] = __('Quiz Result', 'fluentformpro');
+        $extractedStrings["form_{$formId}_payment_success_title"] = __('Payment Success', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_failed_title"] = __('Payment Failed', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_pending_title"] = __('Payment was not marked as paid', 'fluentform');
+        $extractedStrings["form_{$formId}_payment_pending_message"] = __('Looks like you have is still on pending status', 'fluentform');
+        $extractedStrings["form_{$formId}_calculation_error_message"] = __('Calculation error occurred', 'fluentformpro');
+        $extractedStrings["form_{$formId}_calculation_invalid_formula"] = __('Invalid formula provided', 'fluentformpro');
+        $extractedStrings["form_{$formId}_calculation_division_by_zero"] = __('Division by zero error', 'fluentformpro');
+        $extractedStrings["form_{$formId}_inventory_insufficient_stock"] = __('Insufficient stock available', 'fluentformpro');
+        $extractedStrings["form_{$formId}_inventory_stock_limit_reached"] = __('Stock limit has been reached', 'fluentformpro');
+
         // Global security/spam defaults - same message for all forms but translatable per-form
         $extractedStrings["form_{$formId}_akismet_spam_message"] = __('Submission marked as spammed. Please try again', 'fluentform');
         $extractedStrings["form_{$formId}_too_many_requests_message"] = __('Too Many Requests.', 'fluentform');
@@ -2410,6 +2591,47 @@ class SettingsController
 
             do_action('wpml_register_string', $value, $key, $package, $formId, $type);
         }
+    }
+
+    private function resolveConditionalConfirmationMetaId($formId, $confirmation)
+    {
+        if (isset(self::$conditionalConfirmationMetaCache[$formId])) {
+            $confirmationMetas = self::$conditionalConfirmationMetaCache[$formId];
+        } else {
+            $confirmationMetas = wpFluent()->table('fluentform_form_meta')
+                ->where('form_id', $formId)
+                ->where('meta_key', 'confirmations')
+                ->get();
+
+            self::$conditionalConfirmationMetaCache[$formId] = $confirmationMetas;
+        }
+
+        foreach ($confirmationMetas as $meta) {
+            $storedConfirmation = json_decode($meta->value, true);
+            if (!is_array($storedConfirmation)) {
+                continue;
+            }
+
+            if (
+                ArrayHelper::get($storedConfirmation, 'messageToShow') === ArrayHelper::get($confirmation, 'messageToShow')
+                && ArrayHelper::get($storedConfirmation, 'customPageHtml') === ArrayHelper::get($confirmation, 'customPageHtml')
+                && ArrayHelper::get($storedConfirmation, 'successPageTitle') === ArrayHelper::get($confirmation, 'successPageTitle')
+                && ArrayHelper::get($storedConfirmation, 'redirectMessage') === ArrayHelper::get($confirmation, 'redirectMessage')
+            ) {
+                return $meta->id;
+            }
+        }
+
+        return null;
+    }
+
+    private function translateRuntimeFormString($value, $form, $translationKey, $type = 'LINE')
+    {
+        $package = $this->getFormPackage($form);
+
+        do_action('wpml_register_string', $value, $translationKey, $package, $form->id, $type);
+
+        return apply_filters('wpml_translate_string', $value, $translationKey, $package);
     }
 
     private function updateFormFieldsWithTranslations($fields, $translations, $prefix = '')
@@ -3627,5 +3849,75 @@ class SettingsController
         }
 
         return $messages;
+    }
+
+    public function translateLandingVars($landingVars, $formId)
+    {
+        if (!$this->isWpmlEnabledOnForm($formId) || !is_array($landingVars)) {
+            return $landingVars;
+        }
+
+        $form = Form::find($formId);
+        if (!$form) {
+            return $landingVars;
+        }
+
+        $package = $this->getFormPackage($form);
+
+        if (!empty($landingVars['settings']['title'])) {
+            $landingVars['settings']['title'] = apply_filters(
+                'wpml_translate_string',
+                $landingVars['settings']['title'],
+                "form_{$formId}_landing_page_title",
+                $package
+            );
+            $landingVars['title'] = $landingVars['settings']['title'];
+        }
+
+        if (!empty($landingVars['settings']['description'])) {
+            $landingVars['settings']['description'] = apply_filters(
+                'wpml_translate_string',
+                $landingVars['settings']['description'],
+                "form_{$formId}_landing_page_description",
+                $package
+            );
+        }
+
+        return $landingVars;
+    }
+
+    public function translateFrontEndEntryViewSettings($settings, $submission)
+    {
+        if (!is_array($settings) || !is_object($submission) || !$this->isWpmlEnabledOnForm($submission->form_id)) {
+            return $settings;
+        }
+
+        $form = isset($submission->form) && is_object($submission->form)
+            ? $submission->form
+            : Form::find($submission->form_id);
+
+        if (!$form) {
+            return $settings;
+        }
+
+        $package = $this->getFormPackage($form);
+        $translatableKeys = [
+            'title' => "form_{$submission->form_id}_front_end_entry_view_title",
+            'description' => "form_{$submission->form_id}_front_end_entry_view_description",
+            'content' => "form_{$submission->form_id}_front_end_entry_view_content",
+        ];
+
+        foreach ($translatableKeys as $settingKey => $translationKey) {
+            if (!empty($settings[$settingKey]) && is_string($settings[$settingKey])) {
+                $settings[$settingKey] = apply_filters(
+                    'wpml_translate_string',
+                    $settings[$settingKey],
+                    $translationKey,
+                    $package
+                );
+            }
+        }
+
+        return $settings;
     }
 }
