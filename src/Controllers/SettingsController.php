@@ -6,6 +6,7 @@ use FluentForm\App\Helpers\Helper;
 use FluentForm\App\Models\Form;
 use FluentForm\App\Models\FormMeta;
 use FluentForm\App\Modules\Form\FormFieldsParser;
+use FluentForm\App\Services\FormBuilder\ShortCodeParser;
 use FluentForm\App\Services\Integrations\GlobalNotificationManager;
 use FluentForm\Framework\Helpers\ArrayHelper;
 
@@ -18,6 +19,8 @@ class SettingsController
     protected $app;
 
     private static $currentNotificationFeedId = null;
+
+    private static $currentNotificationContext = [];
 
     private static $isPaymentFormSubmitNotification = false;
 
@@ -645,7 +648,9 @@ class SettingsController
 
     public function translateFormPendingMessage($message, $form)
     {
-        if (!is_object($form) || !isset($form->id) || !$this->isWpmlEnabledOnForm($form->id)) {
+        $form = $this->resolveFormInstance($form);
+
+        if (!$form || !$this->isWpmlEnabledOnForm($form->id)) {
             return $message;
         }
 
@@ -656,7 +661,9 @@ class SettingsController
     
     public function translateFormExpiredMessage($message, $form)
     {
-        if (!is_object($form) || !isset($form->id) || !$this->isWpmlEnabledOnForm($form->id)) {
+        $form = $this->resolveFormInstance($form);
+
+        if (!$form || !$this->isWpmlEnabledOnForm($form->id)) {
             return $message;
         }
 
@@ -1497,7 +1504,12 @@ class SettingsController
 
     public function setCurrentNotificationFeedId($feed, $formData, $entry, $form)
     {
-        self::$currentNotificationFeedId = ArrayHelper::get($feed, 'id');
+        $this->setNotificationContext(
+            ArrayHelper::get($feed, 'id'),
+            is_object($entry) ? ArrayHelper::get((array) $entry, 'id') : ArrayHelper::get($entry, 'id'),
+            $formData,
+            $form
+        );
     }
 
     public function preparePaymentNotificationFeedQueue($submissionId, $submissionData, $form)
@@ -2650,6 +2662,53 @@ class SettingsController
         return $this->translateWithKeyFallback($value, $this->getFormPackage($form), $translationKey);
     }
 
+    private function resolveFormInstance($form)
+    {
+        if (is_object($form) && isset($form->id)) {
+            return $form;
+        }
+
+        if (is_numeric($form)) {
+            return Form::find((int) $form);
+        }
+
+        return null;
+    }
+
+    private function setNotificationContext($feedId, $insertId, $formData, $form)
+    {
+        self::$currentNotificationFeedId = $feedId ? (int) $feedId : null;
+        self::$currentNotificationContext = [
+            'insert_id' => $insertId ? (int) $insertId : 0,
+            'form_data' => is_array($formData) ? $formData : [],
+            'form'      => $form,
+        ];
+    }
+
+    private function clearNotificationContext()
+    {
+        self::$currentNotificationFeedId = null;
+        self::$currentNotificationContext = [];
+    }
+
+    private function translateNotificationOutput($value, $translationKey, $package, $clearContext = true)
+    {
+        $translated = $this->translateWithKeyFallback($value, $package, $translationKey);
+        $insertId = (int) ArrayHelper::get(self::$currentNotificationContext, 'insert_id');
+        $formData = ArrayHelper::get(self::$currentNotificationContext, 'form_data', []);
+        $form = ArrayHelper::get(self::$currentNotificationContext, 'form');
+
+        if ($insertId && $form) {
+            $translated = ShortCodeParser::parse($translated, $insertId, $formData, $form);
+        }
+
+        if ($clearContext) {
+            $this->clearNotificationContext();
+        }
+
+        return $translated;
+    }
+
     private function translateWithKeyFallback($value, $package, $translationKey)
     {
         $translated = apply_filters('wpml_translate_string', $value, $translationKey, $package);
@@ -3713,8 +3772,18 @@ class SettingsController
             return $subject;
         }
 
-        $package = $this->getFormPackage($form);
         $feedId = self::$currentNotificationFeedId;
+
+        if ($feedId !== null) {
+            return $this->translateNotificationOutput(
+                $subject,
+                "form_{$form->id}_notification_{$feedId}_subject",
+                $this->getFormPackage($form),
+                false
+            );
+        }
+
+        $package = $this->getFormPackage($form);
         $key = $feedId !== null
             ? "form_{$form->id}_notification_{$feedId}_subject"
             : "form_{$form->id}_email_subject_line";
@@ -3727,15 +3796,21 @@ class SettingsController
             return $emailBody;
         }
 
-        $package = $this->getFormPackage($form);
         $feedId = self::$currentNotificationFeedId;
+
+        if ($feedId !== null) {
+            return $this->translateNotificationOutput(
+                $emailBody,
+                "form_{$form->id}_notification_{$feedId}_message",
+                $this->getFormPackage($form)
+            );
+        }
+
+        $package = $this->getFormPackage($form);
         $key = $feedId !== null
             ? "form_{$form->id}_notification_{$feedId}_message"
             : "form_{$form->id}_email_body";
         $result = apply_filters('wpml_translate_string', $emailBody, $key, $package);
-        if ($feedId !== null) {
-            self::$currentNotificationFeedId = null;
-        }
         return $result;
     }
 
@@ -3769,13 +3844,14 @@ class SettingsController
         $feedId = self::$currentNotificationFeedId;
 
         if ($feedId !== null) {
+            $this->setNotificationContext($feedId, $insertId, $formData, $form);
             $key = "form_{$form->id}_notification_{$feedId}_message";
         } elseif (self::$isPaymentFormSubmitNotification) {
             // Payment form "on submit" notification path: the feed ID is not passed through
             // fluentform/integration_notify_notifications, so we maintain our own queue.
             $queuedFeedId = array_shift(self::$paymentSubmitFeedIdQueue);
             if ($queuedFeedId) {
-                self::$currentNotificationFeedId = $queuedFeedId;
+                $this->setNotificationContext($queuedFeedId, $insertId, $formData, $form);
                 $key = "form_{$form->id}_notification_{$queuedFeedId}_message";
             } else {
                 return $message;
