@@ -25,6 +25,14 @@ class SettingsController
 
     private static $conditionalConfirmationMetaCache = [];
 
+    private static $legacyTranslationKeyMap = [
+        'modal_button_text' => ['modal_text'],
+        'optin_confirmation_message' => ['double_optin_confirmation'],
+        'step_next_btn' => ['step_next_button_text'],
+        'step_prev_btn' => ['step_prev_button_text'],
+        'advanced_validation_error' => ['validation_error_message'],
+    ];
+
     public function __construct($app)
     {
         $this->app = $app;
@@ -739,7 +747,7 @@ class SettingsController
 
         $package = $this->getFormPackage($form);
 
-        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_modal_button_text", $package);
+        return $this->translateFormStringWithFallback($text, $form, "form_{$form->id}_modal_button_text");
     }
 
     public function translateSurveyLabels($labels, $form)
@@ -796,11 +804,11 @@ class SettingsController
         $package = $this->getFormPackage($form);
 
         if (isset($navigation['next_btn_text'])) {
-            $navigation['next_btn_text'] = apply_filters('wpml_translate_string', $navigation['next_btn_text'], "form_{$form->id}_step_next_btn", $package);
+            $navigation['next_btn_text'] = $this->translateFormStringWithFallback($navigation['next_btn_text'], $form, "form_{$form->id}_step_next_btn");
         }
 
         if (isset($navigation['prev_btn_text'])) {
-            $navigation['prev_btn_text'] = apply_filters('wpml_translate_string', $navigation['prev_btn_text'], "form_{$form->id}_step_prev_btn", $package);
+            $navigation['prev_btn_text'] = $this->translateFormStringWithFallback($navigation['prev_btn_text'], $form, "form_{$form->id}_step_prev_btn");
         }
 
         if (isset($navigation['step_title'])) {
@@ -830,7 +838,7 @@ class SettingsController
 
         foreach ($translatableKeys as $key => $translationKey) {
             if (isset($messages[$key])) {
-                $messages[$key] = apply_filters('wpml_translate_string', $messages[$key], "form_{$form->id}_{$translationKey}", $package);
+                $messages[$key] = $this->translateFormStringWithFallback($messages[$key], $form, "form_{$form->id}_{$translationKey}");
             }
         }
 
@@ -994,7 +1002,7 @@ class SettingsController
 
         // Translate default button text
         if (isset($defaults['btn_text'])) {
-            $defaults['btn_text'] = apply_filters('wpml_translate_string', $defaults['btn_text'], "form_{$formId}_modal_button_text", $package);
+            $defaults['btn_text'] = $this->translateFormStringWithFallback($defaults['btn_text'], $form, "form_{$formId}_modal_button_text");
         }
 
         return $defaults;
@@ -1069,7 +1077,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_optin_confirmation_message", $package);
+        return $this->translateFormStringWithFallback($message, $form, "form_{$form->id}_optin_confirmation_message");
     }
 
     public function translateFileUploadButtonText($text, $form)
@@ -1231,7 +1239,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_step_next_btn", $package);
+        return $this->translateFormStringWithFallback($text, $form, "form_{$form->id}_step_next_btn");
     }
 
     public function translateStepPrevButtonText($text, $data)
@@ -1246,7 +1254,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $text, "form_{$form->id}_step_prev_btn", $package);
+        return $this->translateFormStringWithFallback($text, $form, "form_{$form->id}_step_prev_btn");
     }
 
     public function translateStripePaymentCancelledMessage($message, $submission, $form)
@@ -1323,7 +1331,7 @@ class SettingsController
         }
 
         $package = $this->getFormPackage($form);
-        return apply_filters('wpml_translate_string', $message, "form_{$form->id}_advanced_validation_error", $package);
+        return $this->translateFormStringWithFallback($message, $form, "form_{$form->id}_advanced_validation_error");
     }
 
     public function translateTokenBasedValidationErrorMessage($message, $formId)
@@ -1676,7 +1684,7 @@ class SettingsController
                 $type = 'AREA';
             }
 
-            do_action('wpml_register_string', $value, $key, $package, $formId, $type);
+            $this->registerWpmlStringWithAliases($value, $key, $package, $formId, $type);
         }
 
         return $extractedFields;
@@ -2589,7 +2597,7 @@ class SettingsController
                 $type = 'AREA';
             }
 
-            do_action('wpml_register_string', $value, $key, $package, $formId, $type);
+            $this->registerWpmlStringWithAliases($value, $key, $package, $formId, $type);
         }
     }
 
@@ -2629,9 +2637,61 @@ class SettingsController
     {
         $package = $this->getFormPackage($form);
 
-        do_action('wpml_register_string', $value, $translationKey, $package, $form->id, $type);
+        $this->registerWpmlStringWithAliases($value, $translationKey, $package, $form->id, $type);
 
-        return apply_filters('wpml_translate_string', $value, $translationKey, $package);
+        return $this->translateWithKeyFallback($value, $package, $translationKey);
+    }
+
+    private function translateFormStringWithFallback($value, $form, $translationKey)
+    {
+        return $this->translateWithKeyFallback($value, $this->getFormPackage($form), $translationKey);
+    }
+
+    private function translateWithKeyFallback($value, $package, $translationKey)
+    {
+        $translated = apply_filters('wpml_translate_string', $value, $translationKey, $package);
+
+        if ($translated !== $value) {
+            return $translated;
+        }
+
+        foreach ($this->getLegacyTranslationKeys($translationKey) as $legacyTranslationKey) {
+            $translated = apply_filters('wpml_translate_string', $value, $legacyTranslationKey, $package);
+
+            if ($translated !== $value) {
+                return $translated;
+            }
+        }
+
+        return $translated;
+    }
+
+    private function registerWpmlStringWithAliases($value, $translationKey, $package, $formId, $type)
+    {
+        do_action('wpml_register_string', $value, $translationKey, $package, $formId, $type);
+
+        foreach ($this->getLegacyTranslationKeys($translationKey) as $legacyTranslationKey) {
+            do_action('wpml_register_string', $value, $legacyTranslationKey, $package, $formId, $type);
+        }
+    }
+
+    private function getLegacyTranslationKeys($translationKey)
+    {
+        foreach (self::$legacyTranslationKeyMap as $currentSuffix => $legacySuffixes) {
+            $suffixWithSeparator = '_' . $currentSuffix;
+
+            if (substr($translationKey, -strlen($suffixWithSeparator)) !== $suffixWithSeparator) {
+                continue;
+            }
+
+            $prefix = substr($translationKey, 0, -strlen($currentSuffix));
+
+            return array_map(function ($legacySuffix) use ($prefix) {
+                return $prefix . $legacySuffix;
+            }, $legacySuffixes);
+        }
+
+        return [];
     }
 
     private function updateFormFieldsWithTranslations($fields, $translations, $prefix = '')

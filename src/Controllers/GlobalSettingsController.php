@@ -21,7 +21,7 @@ class GlobalSettingsController
 
     public function init()
     {
-        add_action('init', [$this, 'registerGlobalStrings'], 20);
+        add_action('init', [$this, 'maybeRegisterGlobalStrings'], 20);
 
         add_filter('option__fluentform_global_form_settings', [$this, 'translateGlobalFormSettings']);
         add_filter('option__fluentform_double_optin_settings', [$this, 'translateGlobalDoubleOptinSettings']);
@@ -30,27 +30,36 @@ class GlobalSettingsController
         add_filter('fluentform/double_optin_invalid_confirmation_url_message', [$this, 'translateDoubleOptinInvalidConfirmationUrlMessage']);
     }
 
-    public function registerGlobalStrings()
+    public function maybeRegisterGlobalStrings()
     {
+        $settings = $this->getTrackedOptions();
+        $currentHash = md5(wp_json_encode($settings));
+
+        if (get_option($this->getGlobalSyncOptionName()) === $currentHash) {
+            return;
+        }
+
         $this->registerOptionStrings(
-            (array) get_option('_fluentform_global_form_settings', []),
+            $settings['_fluentform_global_form_settings'],
             $this->extractGlobalFormSettingStrings()
         );
 
         $this->registerOptionStrings(
-            (array) get_option('_fluentform_double_optin_settings', []),
+            $settings['_fluentform_double_optin_settings'],
             $this->extractGlobalDoubleOptinStrings()
         );
 
         $this->registerOptionStrings(
-            (array) get_option('__fluentform_payment_module_settings', []),
+            $settings['__fluentform_payment_module_settings'],
             $this->extractGlobalPaymentModuleStrings()
         );
 
         $this->registerOptionStrings(
-            (array) get_option('fluentform_payment_settings_test', []),
+            $settings['fluentform_payment_settings_test'],
             $this->extractOfflinePaymentStrings()
         );
+
+        update_option($this->getGlobalSyncOptionName(), $currentHash, false);
     }
 
     public function translateGlobalFormSettings($settings)
@@ -167,6 +176,21 @@ class GlobalSettingsController
 
             do_action('wpml_register_string', $value, $translationKey, $this->package, 0, $type);
         }
+    }
+
+    private function getGlobalSyncOptionName()
+    {
+        return '_mfffwpml_global_strings_hash';
+    }
+
+    private function getTrackedOptions()
+    {
+        return [
+            '_fluentform_global_form_settings' => (array) get_option('_fluentform_global_form_settings', []),
+            '_fluentform_double_optin_settings' => (array) get_option('_fluentform_double_optin_settings', []),
+            '__fluentform_payment_module_settings' => (array) get_option('__fluentform_payment_module_settings', []),
+            'fluentform_payment_settings_test' => (array) get_option('fluentform_payment_settings_test', []),
+        ];
     }
 
     private function extractGlobalFormSettingStrings()
