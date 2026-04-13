@@ -36,6 +36,8 @@ You must have all three plugins active for this integration to function properly
 - Validation messages appear in the user's preferred language
 - Support for all Fluent Forms field types
 - Compatible with Fluent Forms Pro features
+- Support for Fluent Forms notifications, confirmations, double opt-in, admin approval, quiz, payment, landing page, and global settings strings
+- Backward-compatible WPML key handling for renamed translation keys
 - Easy setup and configuration
 
 ## Changelog
@@ -43,6 +45,9 @@ You must have all three plugins active for this integration to function properly
 ### 1.0.2
 - Add multiple email notifications support
 - Add PHP 7.4 to 8.3 compatibility
+- Add WPML translation support for current Fluent Forms form meta and global option storage
+- Add support for notifications, confirmations, double opt-in, admin approval, quiz, payment, landing page, modal, and step navigation strings
+- Improve existing translations for renamed WPML keys with backward-compatible lookup and registration
 - Fix PHP notice "Trying to get property 'id' of non-object" when form is passed as array
 
 ### 1.0.1
