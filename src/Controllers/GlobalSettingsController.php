@@ -8,6 +8,8 @@ if (!defined('ABSPATH')) {
 
 class GlobalSettingsController
 {
+    const GLOBAL_STRINGS_SCHEMA_VERSION = '2';
+
     private $package = [
         'kind'  => 'Fluent Forms Global',
         'name'  => 'global_settings',
@@ -22,6 +24,8 @@ class GlobalSettingsController
     public function init()
     {
         add_action('init', [$this, 'maybeRegisterGlobalStrings'], 20);
+        add_action('added_option', [$this, 'markGlobalStringsDirty'], 10, 2);
+        add_action('updated_option', [$this, 'markGlobalStringsDirty'], 10, 3);
 
         add_filter('option__fluentform_global_form_settings', [$this, 'translateGlobalFormSettings']);
         add_filter('option__fluentform_double_optin_settings', [$this, 'translateGlobalDoubleOptinSettings']);
@@ -32,34 +36,41 @@ class GlobalSettingsController
 
     public function maybeRegisterGlobalStrings()
     {
-        $settings = $this->getTrackedOptions();
-        $currentHash = md5(wp_json_encode($settings));
-
-        if (get_option($this->getGlobalSyncOptionName()) === $currentHash) {
+        if (!$this->shouldRegisterGlobalStrings()) {
             return;
         }
 
         $this->registerOptionStrings(
-            $settings['_fluentform_global_form_settings'],
+            (array) get_option('_fluentform_global_form_settings', []),
             $this->extractGlobalFormSettingStrings()
         );
 
         $this->registerOptionStrings(
-            $settings['_fluentform_double_optin_settings'],
+            (array) get_option('_fluentform_double_optin_settings', []),
             $this->extractGlobalDoubleOptinStrings()
         );
 
         $this->registerOptionStrings(
-            $settings['__fluentform_payment_module_settings'],
+            (array) get_option('__fluentform_payment_module_settings', []),
             $this->extractGlobalPaymentModuleStrings()
         );
 
         $this->registerOptionStrings(
-            $settings['fluentform_payment_settings_test'],
+            (array) get_option('fluentform_payment_settings_test', []),
             $this->extractOfflinePaymentStrings()
         );
 
-        update_option($this->getGlobalSyncOptionName(), $currentHash, false);
+        update_option($this->getGlobalSyncVersionOptionName(), self::GLOBAL_STRINGS_SCHEMA_VERSION, false);
+        update_option($this->getGlobalDirtyOptionName(), '0', false);
+    }
+
+    public function markGlobalStringsDirty($option)
+    {
+        if (!$this->isTrackedOption($option)) {
+            return;
+        }
+
+        update_option($this->getGlobalDirtyOptionName(), '1', false);
     }
 
     public function translateGlobalFormSettings($settings)
@@ -178,19 +189,33 @@ class GlobalSettingsController
         }
     }
 
-    private function getGlobalSyncOptionName()
+    private function shouldRegisterGlobalStrings()
     {
-        return '_mfffwpml_global_strings_hash';
+        if (get_option($this->getGlobalSyncVersionOptionName()) !== self::GLOBAL_STRINGS_SCHEMA_VERSION) {
+            return true;
+        }
+
+        return get_option($this->getGlobalDirtyOptionName(), '1') === '1';
     }
 
-    private function getTrackedOptions()
+    private function isTrackedOption($option)
     {
-        return [
-            '_fluentform_global_form_settings' => (array) get_option('_fluentform_global_form_settings', []),
-            '_fluentform_double_optin_settings' => (array) get_option('_fluentform_double_optin_settings', []),
-            '__fluentform_payment_module_settings' => (array) get_option('__fluentform_payment_module_settings', []),
-            'fluentform_payment_settings_test' => (array) get_option('fluentform_payment_settings_test', []),
-        ];
+        return in_array($option, [
+            '_fluentform_global_form_settings',
+            '_fluentform_double_optin_settings',
+            '__fluentform_payment_module_settings',
+            'fluentform_payment_settings_test',
+        ], true);
+    }
+
+    private function getGlobalSyncVersionOptionName()
+    {
+        return '_mfffwpml_global_strings_schema_version';
+    }
+
+    private function getGlobalDirtyOptionName()
+    {
+        return '_mfffwpml_global_strings_dirty';
     }
 
     private function extractGlobalFormSettingStrings()

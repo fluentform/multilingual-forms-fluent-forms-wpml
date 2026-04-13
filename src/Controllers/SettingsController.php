@@ -31,6 +31,9 @@ class SettingsController
         'step_next_btn' => ['step_next_button_text'],
         'step_prev_btn' => ['step_prev_button_text'],
         'advanced_validation_error' => ['validation_error_message'],
+        'payment_modal_opening_message' => ['paystack_payment_modal_opening_message'],
+        'payment_confirming_message' => ['paystack_payment_confirming_message'],
+        'payment_verification_error' => ['paystack_payment_verification_error'],
     ];
 
     public function __construct($app)
