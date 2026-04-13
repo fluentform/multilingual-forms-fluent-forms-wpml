@@ -8,7 +8,7 @@ if (!defined('ABSPATH')) {
 
 class GlobalSettingsController
 {
-    const GLOBAL_STRINGS_SCHEMA_VERSION = '2';
+    const GLOBAL_STRINGS_SCHEMA_VERSION = '1';
 
     private $package = [
         'kind'  => 'Fluent Forms Global',
@@ -31,6 +31,7 @@ class GlobalSettingsController
         add_filter('option__fluentform_double_optin_settings', [$this, 'translateGlobalDoubleOptinSettings']);
         add_filter('option___fluentform_payment_module_settings', [$this, 'translateGlobalPaymentModuleSettings']);
         add_filter('option_fluentform_payment_settings_test', [$this, 'translateOfflinePaymentSettings']);
+        add_filter('option_ff_admin_approval', [$this, 'translateGlobalAdminApprovalSettings']);
         add_filter('fluentform/double_optin_invalid_confirmation_url_message', [$this, 'translateDoubleOptinInvalidConfirmationUrlMessage']);
     }
 
@@ -58,6 +59,11 @@ class GlobalSettingsController
         $this->registerOptionStrings(
             (array) get_option('fluentform_payment_settings_test', []),
             $this->extractOfflinePaymentStrings()
+        );
+
+        $this->registerOptionStrings(
+            (array) get_option('ff_admin_approval', []),
+            $this->extractGlobalAdminApprovalStrings()
         );
 
         update_option($this->getGlobalSyncVersionOptionName(), self::GLOBAL_STRINGS_SCHEMA_VERSION, false);
@@ -161,6 +167,28 @@ class GlobalSettingsController
         return $settings;
     }
 
+    public function translateGlobalAdminApprovalSettings($settings)
+    {
+        if (!is_array($settings)) {
+            return $settings;
+        }
+
+        $keys = $this->extractGlobalAdminApprovalStrings();
+
+        foreach ($keys as $path => $translationKey) {
+            $value = $this->arrayGet($settings, $path);
+            if (is_string($value) && $value !== '') {
+                $this->arraySet(
+                    $settings,
+                    $path,
+                    apply_filters('wpml_translate_string', $value, $translationKey, $this->package)
+                );
+            }
+        }
+
+        return $settings;
+    }
+
     public function translateDoubleOptinInvalidConfirmationUrlMessage($message)
     {
         $translationKey = 'global_double_optin_invalid_confirmation_url_message';
@@ -205,6 +233,7 @@ class GlobalSettingsController
             '_fluentform_double_optin_settings',
             '__fluentform_payment_module_settings',
             'fluentform_payment_settings_test',
+            'ff_admin_approval',
         ], true);
     }
 
@@ -256,6 +285,14 @@ class GlobalSettingsController
         return [
             'business_name' => 'global_payment_module_business_name',
             'business_address' => 'global_payment_module_business_address',
+        ];
+    }
+
+    private function extractGlobalAdminApprovalStrings()
+    {
+        return [
+            'email_subject' => 'global_admin_approval_email_subject',
+            'email_body' => 'global_admin_approval_email_body',
         ];
     }
 
