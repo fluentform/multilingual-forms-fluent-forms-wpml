@@ -56,12 +56,14 @@ class MultilingualFormsFluentFormsWpml
 
     protected function includeFiles()
     {
+        include_once MFFFWPML_DIR . 'src/Controllers/GlobalSettingsController.php';
         include_once MFFFWPML_DIR . 'src/Controllers/SettingsController.php';
     }
 
     protected function registerHooks($fluentForm)
     {
         if ($this->isWpmlActive()) {
+            new MultilingualFormsFluentFormsWpml\Controllers\GlobalSettingsController();
             new MultilingualFormsFluentFormsWpml\Controllers\SettingsController($fluentForm);
         }
     }
