@@ -16,6 +16,8 @@ Seamlessly integrate Fluent Forms with WPML to create multilingual forms for you
 
 === FEATURES ===
 Display form labels, placeholders, and options in the user's preferred language also validation messages appear in the user's preferred language
+Supports Fluent Forms notifications, confirmations, double opt-in, admin approval, quiz, payment, landing page, and global settings strings
+Preserves existing translations for renamed WPML keys with backward-compatible lookup
 
 === Requirements ===
 This plugin requires the following plugins to be installed and activated:
@@ -91,6 +93,9 @@ Install From WordPress Admin Panel:
 = 1.0.2 =
 - Add multiple email notifications support
 - Add PHP 7.4 to 8.3 compatibility
+- Add WPML translation support for current Fluent Forms form meta and global option storage
+- Add support for notifications, confirmations, double opt-in, admin approval, quiz, payment, landing page, modal, and step navigation strings
+- Improve existing translations for renamed WPML keys with backward-compatible lookup and registration
 - Fix PHP notice "Trying to get property 'id' of non-object" when form is passed as array
 
 = 1.0.1 =
@@ -98,4 +103,3 @@ Install From WordPress Admin Panel:
 
 = 1.0.0 =
 - Initial Release
-
