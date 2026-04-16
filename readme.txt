@@ -5,7 +5,7 @@ Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.4
 Tested up to PHP: 8.3
-Stable tag: 1.0.2
+Stable tag: 1.0.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -89,6 +89,9 @@ Install From WordPress Admin Panel:
 
 
 == Changelog ==
+
+= 1.0.3 =
+- Bump plugin version metadata for the next release
 
 = 1.0.2 =
 - Add multiple email notifications support
