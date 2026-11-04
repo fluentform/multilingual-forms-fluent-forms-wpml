@@ -8,7 +8,8 @@ if (!defined('ABSPATH')) {
 
 class GlobalSettingsController
 {
-    const GLOBAL_STRINGS_SCHEMA_VERSION = '1';
+    // 2: the two sync options are autoloaded; the bump makes existing sites run the registration once to switch them.
+    const GLOBAL_STRINGS_SCHEMA_VERSION = '2';
 
     private $package = [
         'kind'  => 'Fluent Forms Global',
@@ -66,8 +67,17 @@ class GlobalSettingsController
             $this->extractGlobalAdminApprovalStrings()
         );
 
-        update_option($this->getGlobalSyncVersionOptionName(), self::GLOBAL_STRINGS_SCHEMA_VERSION, false);
-        update_option($this->getGlobalDirtyOptionName(), '0', false);
+        // Both options are read on every request (init), so they are autoloaded; otherwise each one costs a query.
+        update_option($this->getGlobalSyncVersionOptionName(), self::GLOBAL_STRINGS_SCHEMA_VERSION, true);
+        update_option($this->getGlobalDirtyOptionName(), '0', true);
+
+        // update_option() changes autoload only together with the value; switch rows from older versions as well.
+        if (function_exists('wp_set_options_autoload')) {
+            wp_set_options_autoload([
+                $this->getGlobalSyncVersionOptionName(),
+                $this->getGlobalDirtyOptionName(),
+            ], true);
+        }
     }
 
     public function markGlobalStringsDirty($option)
@@ -76,7 +86,7 @@ class GlobalSettingsController
             return;
         }
 
-        update_option($this->getGlobalDirtyOptionName(), '1', false);
+        update_option($this->getGlobalDirtyOptionName(), '1', true);
     }
 
     public function translateGlobalFormSettings($settings)
