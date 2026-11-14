@@ -2668,7 +2668,7 @@ class SettingsController
     {
         $this->setNotificationContext(
             ArrayHelper::get($feed, 'id'),
-            is_object($entry) ? ArrayHelper::get((array) $entry, 'id') : ArrayHelper::get($entry, 'id'),
+            is_object($entry) ? $entry->id : ArrayHelper::get($entry, 'id'),
             $formData,
             $form
         );
