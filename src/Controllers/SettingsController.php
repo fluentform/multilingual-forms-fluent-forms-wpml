@@ -72,6 +72,7 @@ class SettingsController
         
         add_filter('fluentform/ajax_url', [$this, 'setAjaxLanguage'], 10, 1);
         add_filter('fluentform/global_form_vars', [$this, 'translateConversationalFormVars'], 10, 1);
+        add_filter('fluentform/rendering_field_data_save_progress_button', [$this, 'translateConversationalSaveProgressButton'], 10, 2);
         add_filter('fluentform/rendering_form', [$this, 'setWpmlForm'], 10, 1);
 
         // For the submit path: SubmissionHandlerService uses Form::find() and
@@ -2237,6 +2238,26 @@ class SettingsController
         return $defaults;
     }
 
+    /**
+     * Conversational forms skip fluentform/save_progress_button_text, so translate button_ui.text here.
+     *
+     * @param array $field
+     * @param object $form
+     * @return array
+     */
+    public function translateConversationalSaveProgressButton($field, $form)
+    {
+        $buttonText = ArrayHelper::get($field, 'settings.button_ui.text');
+
+        if (!is_string($buttonText) || $buttonText === '' || !is_object($form) || !Helper::isConversionForm($form->id)) {
+            return $field;
+        }
+
+        $field['settings']['button_ui']['text'] = $this->translateSaveProgressButtonText($buttonText, $form);
+
+        return $field;
+    }
+
     public function translateSaveProgressButtonText($text, $form)
     {
         if (!$this->isWpmlEnabledOnForm($form->id)) {
@@ -3056,6 +3077,10 @@ class SettingsController
             case 'gdpr_agreement':
                 if (!empty($field->settings->tnc_html)) {
                     $fields["{$fieldIdentifier}->tnc_html"] = $field->settings->tnc_html;
+                }
+
+                if (Helper::isConversionForm($formId)) {
+                    $fields += $this->getConversationalAnswerStrings($field, $fieldIdentifier);
                 }
                 break;
 
@@ -3940,6 +3965,35 @@ class SettingsController
         return $strings;
     }
 
+    /**
+     * Accept/decline answers keyed by WPML string name; defaults mirror the conversational Converter's literals.
+     *
+     * @param object $field
+     * @param string $fieldIdentifier
+     * @return array
+     */
+    private function getConversationalAnswerStrings($field, $fieldIdentifier)
+    {
+        $settings = (array) $field->settings;
+        $answers = ['tc_agree_text' => 'I accept'];
+
+        if ($field->element === 'terms_and_condition' && !ArrayHelper::isTrue($settings, 'hide_disagree')) {
+            $answers['tc_dis_agree_text'] = 'I don\'t accept';
+        }
+
+        $strings = [];
+
+        foreach ($answers as $key => $defaultText) {
+            $text = ArrayHelper::get($settings, $key, $defaultText);
+
+            if (is_string($text) && $text !== '') {
+                $strings["{$fieldIdentifier}->{$key}"] = $text;
+            }
+        }
+
+        return $strings;
+    }
+
     private function resolveConditionalConfirmationMetaId($formId, $confirmation)
     {
         if (isset(self::$conditionalConfirmationMetaCache[$formId])) {
@@ -4751,6 +4805,12 @@ class SettingsController
                 $key = "{$fieldName}->tnc_html";
                 if (isset($translations[$key])) {
                     $field['settings']['tnc_html'] = $translations[$key];
+                }
+
+                foreach (['tc_agree_text', 'tc_dis_agree_text'] as $answerKey) {
+                    if (isset($translations["{$fieldName}->{$answerKey}"])) {
+                        $field['settings'][$answerKey] = $translations["{$fieldName}->{$answerKey}"];
+                    }
                 }
                 break;
 
