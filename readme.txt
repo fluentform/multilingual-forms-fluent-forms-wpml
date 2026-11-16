@@ -95,6 +95,7 @@ Install From WordPress Admin Panel:
 - Fix untranslatable country list group headings and payment summary empty cart text
 - Fix submissions in a secondary language storing the source language "Other" prefix
 - Add translation of the conversational form's buttons, hints and progress text (re-save the form or re-enable WPML on it to register them)
+- Add translation of the conversational form's terms and GDPR answers and its Save & Resume button
 
 = 1.0.6 =
 - Fix compatibility for translated option response
