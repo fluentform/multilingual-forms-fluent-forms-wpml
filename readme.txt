@@ -94,6 +94,7 @@ Install From WordPress Admin Panel:
 - Fix untranslatable "Other" option label, placeholder, and required message on checkbox and radio fields
 - Fix untranslatable country list group headings and payment summary empty cart text
 - Fix submissions in a secondary language storing the source language "Other" prefix
+- Add translation of the conversational form's buttons, hints and progress text (re-save the form or re-enable WPML on it to register them)
 
 = 1.0.6 =
 - Fix compatibility for translated option response

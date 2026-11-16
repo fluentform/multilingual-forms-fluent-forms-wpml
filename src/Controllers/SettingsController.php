@@ -9,6 +9,7 @@ use FluentForm\App\Models\Submission;
 use FluentForm\App\Modules\Acl\Acl;
 use FluentForm\App\Modules\Form\FormDataParser;
 use FluentForm\App\Modules\Form\FormFieldsParser;
+use FluentForm\App\Services\FluentConversational\Classes\Form as ConversationalForm;
 use FluentForm\App\Services\FormBuilder\Notifications\EmailNotification;
 use FluentForm\App\Services\FormBuilder\ShortCodeParser;
 use FluentForm\App\Services\Integrations\GlobalNotificationManager;
@@ -70,6 +71,7 @@ class SettingsController
         add_action('init', [$this, 'setupLanguageForAjax'], 5);
         
         add_filter('fluentform/ajax_url', [$this, 'setAjaxLanguage'], 10, 1);
+        add_filter('fluentform/global_form_vars', [$this, 'translateConversationalFormVars'], 10, 1);
         add_filter('fluentform/rendering_form', [$this, 'setWpmlForm'], 10, 1);
 
         // For the submit path: SubmissionHandlerService uses Form::find() and
@@ -505,6 +507,40 @@ class SettingsController
             $url = add_query_arg(['lang' => $sitepress->get_current_language()], $url);
         }
         return $url;
+    }
+
+    /**
+     * Translates the conversational app's i18n texts. Leaves ajaxurl alone:
+     * the conversational JS appends "?action=" to it, so a query string breaks coupons.
+     *
+     * @param array $vars
+     * @return array
+     */
+    public function translateConversationalFormVars($vars)
+    {
+        $formId = (int) ArrayHelper::get($vars, 'form_id');
+
+        if (!isset($vars['i18n']) || !is_array($vars['i18n']) || !Helper::isConversionForm($formId)) {
+            return $vars;
+        }
+
+        if (!$this->isWpmlEnabledOnForm($formId)) {
+            return $vars;
+        }
+
+        $form = $this->getCachedFormModel($formId);
+
+        if (!$form) {
+            return $vars;
+        }
+
+        foreach ($vars['i18n'] as $key => $text) {
+            if (is_string($text) && $text !== '') {
+                $vars['i18n'][$key] = $this->translateFormStringWithFallback($text, $form, "form_{$formId}_conversational_{$key}");
+            }
+        }
+
+        return $vars;
     }
 
     /**
@@ -3867,6 +3903,8 @@ class SettingsController
         $extractedStrings["form_{$formId}_too_many_requests_message"] = __('Too Many Requests.', 'fluentform');
         $extractedStrings["form_{$formId}_quiz_personality_fallback_label"] = __('Did not match any options!', 'fluentformpro');
 
+        $extractedStrings += $this->getConversationalTextStrings($formId);
+
         foreach ($extractedStrings as $key => $value) {
             $type = 'LINE';
             if (is_string($value) && (preg_match('/{([^}]+)}/', $value) || preg_match('/#([^#]+)#/', $value) || strpos($value, '<') !== false)) {
@@ -3875,6 +3913,31 @@ class SettingsController
 
             $this->registerWpmlStringWithAliases($value, $key, $package, $formId, $type);
         }
+    }
+
+    /**
+     * Conversational i18n texts keyed by WPML string name; empty for a normal form.
+     * Uses free's saved-or-default values, so the source matches what the page sends.
+     *
+     * @param int $formId
+     * @return array
+     */
+    private function getConversationalTextStrings($formId)
+    {
+        if (!Helper::isConversionForm($formId)) {
+            return [];
+        }
+
+        $metaSettings = (new ConversationalForm())->getMetaSettings($formId);
+        $strings = [];
+
+        foreach ((array) ArrayHelper::get($metaSettings, 'i18n', []) as $key => $text) {
+            if (is_string($text) && $text !== '') {
+                $strings["form_{$formId}_conversational_{$key}"] = $text;
+            }
+        }
+
+        return $strings;
     }
 
     private function resolveConditionalConfirmationMetaId($formId, $confirmation)
