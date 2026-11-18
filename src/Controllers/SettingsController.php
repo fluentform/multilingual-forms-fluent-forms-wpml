@@ -406,7 +406,7 @@ class SettingsController
 
         // Extract and register regular form fields
         $fields = isset($decodedFields->fields) ? $decodedFields->fields : [];
-        $this->extractAndRegisterStrings($fields, $formId, $package);
+        $fieldStrings = $this->extractAndRegisterStrings($fields, $formId, $package);
 
         // Extract and register submit button
         if (isset($decodedFields->submitButton)) {
@@ -430,6 +430,8 @@ class SettingsController
         if (isset($form->settings)) {
             $this->extractAndRegisterFormSettingsStrings($form->settings, $formId, $package);
         }
+
+        $this->moveSurveyCopyTranslationsToLabels($formId, $fieldStrings);
 
         // Finish the registration process
         do_action('wpml_delete_unused_package_strings', $package);
@@ -2225,7 +2227,26 @@ class SettingsController
             return $translated;
         }
 
+        $fieldName = $this->findFieldNameByLabel($form, $label);
+        if ($fieldName) {
+            $translated = apply_filters('wpml_translate_string', $label, "{$fieldName}->Label", $package);
+            if ($translated !== $label) {
+                return $translated;
+            }
+        }
+
         return apply_filters('wpml_translate_string', $label, "form_{$form->id}_survey_field_label", $package);
+    }
+
+    private function findFieldNameByLabel($form, $label)
+    {
+        foreach ($this->getFormInputs($form, ['label']) as $fieldName => $input) {
+            if (ArrayHelper::get($input, 'label') === $label) {
+                return $fieldName;
+            }
+        }
+
+        return null;
     }
 
     public function translateSurveyVotesText($text, $form)
@@ -2854,6 +2875,89 @@ class SettingsController
         return self::$formPackageCache[$id];
     }
 
+    // wpml_delete_unused_package_strings drops the md5 survey copies next; keep translations that exist only there.
+    private function moveSurveyCopyTranslationsToLabels($formId, $fieldStrings)
+    {
+        $copyNamesByLabel = $this->mapLabelNamesToSurveyCopyNames($formId, $fieldStrings);
+
+        if (!$copyNamesByLabel || !function_exists('icl_add_string_translation')) {
+            return;
+        }
+
+        $context = 'fluent-forms-' . $formId;
+        $stringNames = array_merge(array_keys($copyNamesByLabel), array_values($copyNamesByLabel));
+
+        foreach ($this->getTranslatedLanguagesOfStrings($context, array_values($copyNamesByLabel)) as $language) {
+            $stored = $this->getStoredWpmlTranslations($context, $stringNames, $language);
+
+            foreach ($copyNamesByLabel as $labelName => $copyName) {
+                if (!$this->shouldSurveyCopyReplaceLabel($stored, $copyName, $labelName)) {
+                    continue;
+                }
+
+                $stringId = icl_get_string_id($fieldStrings[$labelName], $context, $labelName);
+                if ($stringId) {
+                    icl_add_string_translation($stringId, $language, $stored[$copyName]['value'], (int) $stored[$copyName]['status']);
+                }
+            }
+        }
+    }
+
+    private function mapLabelNamesToSurveyCopyNames($formId, $fieldStrings)
+    {
+        $copyNamesByLabel = [];
+
+        foreach ($fieldStrings as $name => $value) {
+            if (is_string($value) && substr($name, -strlen('->Label')) === '->Label') {
+                $copyNamesByLabel[$name] = "form_{$formId}_survey_field_label_" . md5($value);
+            }
+        }
+
+        return $copyNamesByLabel;
+    }
+
+    private function getTranslatedLanguagesOfStrings($context, $stringNames)
+    {
+        global $wpdb;
+
+        return $wpdb->get_col($wpdb->prepare(
+            "SELECT DISTINCT translations.language
+            FROM {$wpdb->prefix}icl_strings AS strings
+            INNER JOIN {$wpdb->prefix}icl_string_translations AS translations ON strings.id = translations.string_id
+            WHERE strings.context = %s
+            AND strings.name IN (" . implode(', ', array_fill(0, count($stringNames), '%s')) . ')',
+            array_merge([$context], $stringNames)
+        ));
+    }
+
+    // Visitors were served the copy first whenever WPML serves it (complete or needs update), so it keeps winning.
+    private function shouldSurveyCopyReplaceLabel($storedTranslations, $copyName, $labelName)
+    {
+        if (!$this->hasTranslationText($storedTranslations, $copyName)) {
+            return false;
+        }
+
+        $copy = $storedTranslations[$copyName];
+        $copyStatus = (int) $copy['status'];
+        $labelHasText = $this->hasTranslationText($storedTranslations, $labelName);
+        $labelIsComplete = $labelHasText && (int) $storedTranslations[$labelName]['status'] === ICL_TM_COMPLETE;
+
+        if ($copyStatus === ICL_TM_COMPLETE) {
+            return !$labelIsComplete || $storedTranslations[$labelName]['value'] !== $copy['value'];
+        }
+
+        if ($copyStatus === ICL_TM_NEEDS_UPDATE) {
+            return !$labelIsComplete;
+        }
+
+        return $copyStatus === ICL_TM_NOT_TRANSLATED && !$labelHasText;
+    }
+
+    private function hasTranslationText($storedTranslations, $stringName)
+    {
+        return isset($storedTranslations[$stringName]) && (string) $storedTranslations[$stringName]['value'] !== '';
+    }
+
     private function extractAndRegisterStrings($fields, $formId, $package)
     {
         $extractedFields = [];
@@ -2910,7 +3014,6 @@ class SettingsController
         // Extract common fields
         if (!empty($field->settings->label)) {
             $fields["{$fieldIdentifier}->Label"] = $field->settings->label;
-            $fields["form_{$formId}_survey_field_label_" . md5($field->settings->label)] = $field->settings->label;
         }
 
         if (!empty($field->settings->admin_label)) {
