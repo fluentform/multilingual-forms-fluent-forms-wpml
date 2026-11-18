@@ -2,13 +2,15 @@
 
 namespace MultilingualFormsFluentFormsWpml\Controllers;
 
+use FluentForm\App\Helpers\Helper;
+
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly.
 }
 
 class GlobalSettingsController
 {
-    const GLOBAL_STRINGS_SCHEMA_VERSION = '1';
+    const GLOBAL_STRINGS_SCHEMA_VERSION = '2';
 
     private $package = [
         'kind'  => 'Fluent Forms Global',
@@ -28,6 +30,7 @@ class GlobalSettingsController
         add_action('updated_option', [$this, 'markGlobalStringsDirty'], 10, 3);
 
         add_filter('option__fluentform_global_form_settings', [$this, 'translateGlobalFormSettings']);
+        add_filter('fluentform/global_default_messages', [$this, 'translateBuiltInDefaultMessages']);
         add_filter('option__fluentform_double_optin_settings', [$this, 'translateGlobalDoubleOptinSettings']);
         add_filter('option___fluentform_payment_module_settings', [$this, 'translateGlobalPaymentModuleSettings']);
         add_filter('option_fluentform_payment_settings_test', [$this, 'translateOfflinePaymentSettings']);
@@ -41,10 +44,16 @@ class GlobalSettingsController
             return;
         }
 
-        $this->registerOptionStrings(
-            (array) get_option('_fluentform_global_form_settings', []),
-            $this->extractGlobalFormSettingStrings()
-        );
+        $globalFormSettings = (array) get_option('_fluentform_global_form_settings', []);
+        $canRegisterBuiltInMessages = self::isDefaultLanguageLocale();
+        if ($canRegisterBuiltInMessages) {
+            $globalFormSettings['default_messages'] = array_merge(
+                $this->getBuiltInDefaultMessages(),
+                (array) $this->arrayGet($globalFormSettings, 'default_messages')
+            );
+        }
+
+        $this->registerOptionStrings($globalFormSettings, $this->extractGlobalFormSettingStrings());
 
         $this->registerOptionStrings(
             (array) get_option('_fluentform_double_optin_settings', []),
@@ -67,7 +76,28 @@ class GlobalSettingsController
         );
 
         update_option($this->getGlobalSyncVersionOptionName(), self::GLOBAL_STRINGS_SCHEMA_VERSION, false);
-        update_option($this->getGlobalDirtyOptionName(), '0', false);
+        update_option($this->getGlobalDirtyOptionName(), $canRegisterBuiltInMessages ? '0' : '1', false);
+    }
+
+    // Messages saved in Global Settings are already translated by the option filter; only the built-in ones are left.
+    public function translateBuiltInDefaultMessages($messages)
+    {
+        if (!is_array($messages)) {
+            return $messages;
+        }
+
+        $savedMessages = (array) $this->arrayGet((array) get_option('_fluentform_global_form_settings', []), 'default_messages');
+
+        foreach ($this->extractGlobalFormSettingStrings() as $path => $translationKey) {
+            $key = substr($path, strlen('default_messages.'));
+            if (!empty($savedMessages[$key]) || empty($messages[$key]) || !is_string($messages[$key])) {
+                continue;
+            }
+
+            $messages[$key] = apply_filters('wpml_translate_string', $messages[$key], $translationKey, $this->package);
+        }
+
+        return $messages;
     }
 
     public function markGlobalStringsDirty($option)
@@ -226,6 +256,30 @@ class GlobalSettingsController
         return get_option($this->getGlobalDirtyOptionName(), '1') === '1';
     }
 
+    private function getBuiltInDefaultMessages()
+    {
+        if (!method_exists(Helper::class, 'globalDefaultMessageSettingFields')) {
+            return [];
+        }
+
+        return array_map(function ($field) {
+            return isset($field['value']) ? $field['value'] : '';
+        }, Helper::globalDefaultMessageSettingFields());
+    }
+
+    // Built-in messages come from __(), so register them only in the default language's locale to keep the WPML source in that language.
+    public static function isDefaultLanguageLocale()
+    {
+        $defaultLanguage = apply_filters('wpml_default_language', null);
+        $languages = apply_filters('wpml_active_languages', null, ['skip_missing' => 0]);
+
+        if (!$defaultLanguage || empty($languages[$defaultLanguage]['default_locale'])) {
+            return true;
+        }
+
+        return determine_locale() === $languages[$defaultLanguage]['default_locale'];
+    }
+
     private function isTrackedOption($option)
     {
         return in_array($option, [
@@ -255,6 +309,8 @@ class GlobalSettingsController
             'default_messages.numeric' => 'global_default_message_numeric',
             'default_messages.min' => 'global_default_message_min',
             'default_messages.max' => 'global_default_message_max',
+            'default_messages.min_selection' => 'global_default_message_min_selection',
+            'default_messages.max_selection' => 'global_default_message_max_selection',
             'default_messages.digits' => 'global_default_message_digits',
             'default_messages.url' => 'global_default_message_url',
             'default_messages.allowed_image_types' => 'global_default_message_allowed_image_types',
