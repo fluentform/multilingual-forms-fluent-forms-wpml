@@ -427,11 +427,12 @@ class SettingsController
             }
         }
 
-        if (isset($form->settings)) {
-            $this->extractAndRegisterFormSettingsStrings($form->settings, $formId, $package);
-        }
+        $settingsStrings = isset($form->settings)
+            ? $this->extractAndRegisterFormSettingsStrings($form->settings, $formId, $package)
+            : [];
 
         $this->moveSurveyCopyTranslationsToLabels($formId, $fieldStrings);
+        $this->moveLegacyKeyTranslationsToCurrentKeys($formId, $settingsStrings);
 
         // Finish the registration process
         do_action('wpml_delete_unused_package_strings', $package);
@@ -2903,6 +2904,106 @@ class SettingsController
         }
     }
 
+    // wpml_delete_unused_package_strings drops the alias and index keys next; keep translations that exist only there.
+    private function moveLegacyKeyTranslationsToCurrentKeys($formId, $currentStrings)
+    {
+        if (!function_exists('icl_add_string_translation')) {
+            return;
+        }
+
+        $legacyNamesByCurrentName = [];
+
+        foreach ($currentStrings as $currentName => $value) {
+            $legacyNames = array_merge(
+                $this->getLegacyTranslationKeys($currentName),
+                $this->getLegacyNotificationTranslationKeys($currentName)
+            );
+            // A feed's index key can equal another feed's meta-id key; that one is a current key, not a legacy one.
+            $legacyNames = array_diff($legacyNames, array_keys($currentStrings));
+
+            if ($legacyNames) {
+                $legacyNamesByCurrentName[$currentName] = $legacyNames;
+            }
+        }
+
+        if (!$legacyNamesByCurrentName) {
+            return;
+        }
+
+        $context = 'fluent-forms-' . $formId;
+        $allLegacyNames = array_merge(...array_values($legacyNamesByCurrentName));
+        $stringNames = array_merge(array_keys($legacyNamesByCurrentName), $allLegacyNames);
+
+        foreach ($this->getTranslatedLanguagesOfStrings($context, $allLegacyNames) as $language) {
+            $stored = $this->getStoredWpmlTranslations($context, $stringNames, $language);
+
+            foreach ($legacyNamesByCurrentName as $currentName => $legacyNames) {
+                $legacyName = $this->findMovableLegacyName($stored, $currentName, $legacyNames);
+                if (!$legacyName) {
+                    continue;
+                }
+
+                $stringId = icl_get_string_id($currentStrings[$currentName], $context, $currentName);
+                if (!$stringId) {
+                    continue;
+                }
+
+                $status = $this->getLegacyTranslationStatus($stored, $legacyName, $currentName);
+                icl_add_string_translation($stringId, $language, $stored[$legacyName]['value'], $status);
+            }
+        }
+    }
+
+    // Keep the translation WPML served visitors (complete, then needs update, then a draft); a job-bound one is never touched.
+    private function findMovableLegacyName($storedTranslations, $currentName, $legacyNames)
+    {
+        $currentStatus = isset($storedTranslations[$currentName]) ? (int) $storedTranslations[$currentName]['status'] : ICL_TM_NOT_TRANSLATED;
+        $bestRank = $this->getServedTranslationRank($this->hasTranslationText($storedTranslations, $currentName), $currentStatus);
+        if ($bestRank === null) {
+            return null;
+        }
+
+        $movableName = null;
+
+        foreach ($legacyNames as $legacyName) {
+            if (!$this->hasTranslationText($storedTranslations, $legacyName)) {
+                continue;
+            }
+
+            $rank = $this->getServedTranslationRank(true, $this->getLegacyTranslationStatus($storedTranslations, $legacyName, $currentName));
+            if ($rank !== null && $rank > $bestRank) {
+                $bestRank = $rank;
+                $movableName = $legacyName;
+            }
+        }
+
+        return $movableName;
+    }
+
+    // The legacy key kept its old source, so a complete translation of since-edited text moves as needs update.
+    private function getLegacyTranslationStatus($storedTranslations, $legacyName, $currentName)
+    {
+        $status = (int) $storedTranslations[$legacyName]['status'];
+        $currentSource = isset($storedTranslations[$currentName]) ? (string) $storedTranslations[$currentName]['source'] : '';
+
+        if ($status === ICL_TM_COMPLETE && (string) $storedTranslations[$legacyName]['source'] !== $currentSource) {
+            return ICL_TM_NEEDS_UPDATE;
+        }
+
+        return $status;
+    }
+
+    private function getServedTranslationRank($hasText, $status)
+    {
+        $ranks = [ICL_TM_NOT_TRANSLATED => 0, ICL_TM_NEEDS_UPDATE => 1, ICL_TM_COMPLETE => 2];
+
+        if (!isset($ranks[$status])) {
+            return null;
+        }
+
+        return $hasText ? $ranks[$status] : -1;
+    }
+
     private function mapLabelNamesToSurveyCopyNames($formId, $fieldStrings)
     {
         $copyNamesByLabel = [];
@@ -2978,7 +3079,7 @@ class SettingsController
                 $type = 'AREA';
             }
 
-            $this->registerWpmlStringWithAliases($value, $key, $package, $formId, $type);
+            do_action('wpml_register_string', $value, $key, $package, $formId, $type);
         }
 
         return $extractedFields;
@@ -3016,7 +3117,7 @@ class SettingsController
             $fields["{$fieldIdentifier}->Label"] = $field->settings->label;
         }
 
-        if (!empty($field->settings->admin_label)) {
+        if (!empty($field->settings->admin_field_label)) {
             $fields["{$fieldIdentifier}->admin_label"] = $field->settings->admin_field_label;
         }
 
@@ -3570,18 +3671,16 @@ class SettingsController
             ->where('meta_key', 'notifications')
             ->get();
 
-        foreach ($notificationMetas as $notificationIndex => $meta) {
+        foreach ($notificationMetas as $meta) {
             $notification = json_decode($meta->value, true);
             if (!$notification) {
                 continue;
             }
             if (!empty($notification['subject'])) {
                 $extractedStrings["form_{$formId}_notification_{$meta->id}_subject"] = $notification['subject'];
-                $extractedStrings["form_{$formId}_notification_{$notificationIndex}_subject"] = $notification['subject'];
             }
             if (!empty($notification['message'])) {
                 $extractedStrings["form_{$formId}_notification_{$meta->id}_message"] = $notification['message'];
-                $extractedStrings["form_{$formId}_notification_{$notificationIndex}_message"] = $notification['message'];
             }
         }
 
@@ -3976,8 +4075,10 @@ class SettingsController
                 $type = 'AREA';
             }
 
-            $this->registerWpmlStringWithAliases($value, $key, $package, $formId, $type);
+            do_action('wpml_register_string', $value, $key, $package, $formId, $type);
         }
+
+        return $extractedStrings;
     }
 
     private function resolveConditionalConfirmationMetaId($formId, $confirmation)
@@ -4016,7 +4117,7 @@ class SettingsController
     {
         $package = $this->getFormPackage($form);
 
-        $this->registerWpmlStringWithAliases($value, $translationKey, $package, $form->id, $type);
+        do_action('wpml_register_string', $value, $translationKey, $package, $form->id, $type);
 
         return $this->translateWithKeyFallback($value, $package, $translationKey);
     }
@@ -4309,15 +4410,6 @@ class SettingsController
         return $translated;
     }
 
-    private function registerWpmlStringWithAliases($value, $translationKey, $package, $formId, $type)
-    {
-        do_action('wpml_register_string', $value, $translationKey, $package, $formId, $type);
-
-        foreach ($this->getLegacyTranslationKeys($translationKey) as $legacyTranslationKey) {
-            do_action('wpml_register_string', $value, $legacyTranslationKey, $package, $formId, $type);
-        }
-    }
-
     private function getLegacyTranslationKeys($translationKey)
     {
         foreach (self::$legacyTranslationKeyMap as $currentSuffix => $legacySuffixes) {
@@ -4532,7 +4624,7 @@ class SettingsController
         $placeholders = implode(', ', array_fill(0, count($stringNames), '%s'));
         $queryArgs = array_merge([$language, $context], $stringNames);
         $sql = $wpdb->prepare(
-            "SELECT strings.name, translations.status, translations.value
+            "SELECT strings.name, strings.value AS source, translations.status, translations.value
             FROM {$stringsTable} AS strings
             LEFT JOIN {$translationsTable} AS translations
                 ON strings.id = translations.string_id
@@ -4554,6 +4646,7 @@ class SettingsController
             $result[$name] = [
                 'status' => ArrayHelper::get($row, 'status'),
                 'value'  => ArrayHelper::get($row, 'value'),
+                'source' => ArrayHelper::get($row, 'source'),
             ];
         }
 
