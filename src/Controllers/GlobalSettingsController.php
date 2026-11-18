@@ -33,6 +33,22 @@ class GlobalSettingsController
         add_filter('option_fluentform_payment_settings_test', [$this, 'translateOfflinePaymentSettings']);
         add_filter('option_ff_admin_approval', [$this, 'translateGlobalAdminApprovalSettings']);
         add_filter('fluentform/double_optin_invalid_confirmation_url_message', [$this, 'translateDoubleOptinInvalidConfirmationUrlMessage']);
+        add_filter('wpml_active_string_package_kinds', [$this, 'addGlobalPackageKind']);
+    }
+
+    // Translate Everything Automatically only sends packages whose kind slug is listed here.
+    public function addGlobalPackageKind($kinds)
+    {
+        $kinds = is_array($kinds) ? $kinds : [];
+        $kinds['fluent-forms-global'] = [
+            /* translators: Name of the Fluent Forms global settings content type on the WPML translation dashboard. Singular. */
+            'title'  => __('Fluent Forms Global Setting', 'multilingual-forms-fluent-forms-wpml'),
+            /* translators: Name of the Fluent Forms global settings content type on the WPML translation dashboard. Plural. */
+            'plural' => __('Fluent Forms Global Settings', 'multilingual-forms-fluent-forms-wpml'),
+            'slug'   => 'fluent-forms-global',
+        ];
+
+        return $kinds;
     }
 
     public function maybeRegisterGlobalStrings()

@@ -68,6 +68,7 @@ class SettingsController
     public function init()
     {
         add_action('init', [$this, 'setupLanguageForAjax'], 5);
+        add_filter('wpml_active_string_package_kinds', [$this, 'addFormPackageKind']);
         
         add_filter('fluentform/ajax_url', [$this, 'setAjaxLanguage'], 10, 1);
         add_filter('fluentform/rendering_form', [$this, 'setWpmlForm'], 10, 1);
@@ -2852,6 +2853,21 @@ class SettingsController
         }
 
         return self::$formPackageCache[$id];
+    }
+
+    // Translate Everything Automatically only sends packages whose kind slug is listed here.
+    public function addFormPackageKind($kinds)
+    {
+        $kinds = is_array($kinds) ? $kinds : [];
+        $kinds['fluent-forms'] = [
+            /* translators: Name of the Fluent Forms form content type on the WPML translation dashboard. Singular. */
+            'title'  => __('Fluent Form', 'multilingual-forms-fluent-forms-wpml'),
+            /* translators: Name of the Fluent Forms form content type on the WPML translation dashboard. Plural. */
+            'plural' => __('Fluent Forms', 'multilingual-forms-fluent-forms-wpml'),
+            'slug'   => 'fluent-forms',
+        ];
+
+        return $kinds;
     }
 
     private function extractAndRegisterStrings($fields, $formId, $package)
