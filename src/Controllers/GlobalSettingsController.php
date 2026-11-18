@@ -45,7 +45,7 @@ class GlobalSettingsController
         }
 
         $globalFormSettings = (array) get_option('_fluentform_global_form_settings', []);
-        $canRegisterBuiltInMessages = $this->isDefaultLanguageLocale();
+        $canRegisterBuiltInMessages = self::isDefaultLanguageLocale();
         if ($canRegisterBuiltInMessages) {
             $globalFormSettings['default_messages'] = array_merge(
                 $this->getBuiltInDefaultMessages(),
@@ -268,7 +268,7 @@ class GlobalSettingsController
     }
 
     // Built-in messages come from __(), so register them only in the default language's locale to keep the WPML source in that language.
-    private function isDefaultLanguageLocale()
+    public static function isDefaultLanguageLocale()
     {
         $defaultLanguage = apply_filters('wpml_default_language', null);
         $languages = apply_filters('wpml_active_languages', null, ['skip_missing' => 0]);

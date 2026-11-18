@@ -5833,13 +5833,8 @@ class SettingsController
         }
 
         if ($message === ArrayHelper::get($settings, 'email_subject')) {
-            if ($emailBodyType === 'global') {
-                return apply_filters(
-                    'wpml_translate_string',
-                    $message,
-                    'global_double_optin_email_subject',
-                    $this->getGlobalSettingsPackage()
-                );
+            if ($this->usesGlobalDoubleOptinText($form, $emailBodyType, 'email_subject')) {
+                return $this->translateGlobalDoubleOptinMessage($message, 'email_subject', 'LINE');
             }
 
             return apply_filters(
@@ -5851,13 +5846,8 @@ class SettingsController
         }
 
         if ($message === ArrayHelper::get($settings, 'email_body')) {
-            if ($emailBodyType === 'global') {
-                return apply_filters(
-                    'wpml_translate_string',
-                    $message,
-                    'global_double_optin_email_body',
-                    $this->getGlobalSettingsPackage()
-                );
+            if ($this->usesGlobalDoubleOptinText($form, $emailBodyType, 'email_body')) {
+                return $this->translateGlobalDoubleOptinMessage($message, 'email_body', 'AREA');
             }
 
             return apply_filters(
@@ -5869,6 +5859,32 @@ class SettingsController
         }
 
         return null;
+    }
+
+    // Pro sends the global text when the form uses it or leaves its own field empty.
+    private function usesGlobalDoubleOptinText($form, $emailBodyType, $field)
+    {
+        if ($emailBodyType === 'global') {
+            return true;
+        }
+
+        $formSettings = (array) Helper::getFormMeta($form->id, 'double_optin_settings', []);
+
+        return empty($formSettings[$field]);
+    }
+
+    // Pro's built-in subject/body defaults live in a private method and are never saved, so register them from the send itself.
+    private function translateGlobalDoubleOptinMessage($message, $field, $type)
+    {
+        $translationKey = 'global_double_optin_' . $field;
+        $package = $this->getGlobalSettingsPackage();
+        $saved = (array) get_option('_fluentform_double_optin_settings', []);
+
+        if (empty($saved[$field]) && GlobalSettingsController::isDefaultLanguageLocale()) {
+            do_action('wpml_register_string', $message, $translationKey, $package, 0, $type);
+        }
+
+        return apply_filters('wpml_translate_string', $message, $translationKey, $package);
     }
 
     private function getGlobalSettingsPackage()
